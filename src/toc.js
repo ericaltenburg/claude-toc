@@ -86,13 +86,14 @@ export function resolveAllTopics(input) {
 
 // --- Topic file operations ---
 
-export function appendToTopic(topicId, section, entry) {
+export function appendToTopic(topicId, section, entry, sessionId) {
   const topicFile = join(TOPICS_DIR, `${topicId}.md`);
   if (!existsSync(topicFile)) return;
 
   const content = readFileSync(topicFile, "utf-8");
   const ts = new Date().toISOString().slice(0, 10);
-  const line = `- ${entry} [${ts}]\n`;
+  const sid = sessionId?.slice(0, 8) || "unknown";
+  const line = `- ${entry} [session:${sid}, ${ts}]\n`;
 
   // find the section header and append after it
   const header = `## ${section}`;
@@ -160,6 +161,33 @@ function countEntries(topicId) {
   return readFileSync(topicFile, "utf-8")
     .split("\n")
     .filter((l) => l.startsWith("- ")).length;
+}
+
+// --- Similarity ---
+
+export function jaccardSimilarity(setA, setB) {
+  const a = new Set([...setA].map(s => s.toLowerCase()));
+  const b = new Set([...setB].map(s => s.toLowerCase()));
+  const intersection = [...a].filter(x => b.has(x)).length;
+  const union = new Set([...a, ...b]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
+export function findSimilarTopic(candidateId, candidateKeywords) {
+  const toc = loadToc();
+  let best = null;
+  const candidateWords = new Set(candidateId.split("_"));
+  const candidateKwSet = new Set(candidateKeywords);
+
+  for (const [id, topic] of Object.entries(toc.topics)) {
+    const kwScore = jaccardSimilarity(candidateKwSet, new Set(topic.keywords));
+    const idScore = jaccardSimilarity(candidateWords, new Set(id.split("_")));
+    const score = 0.7 * kwScore + 0.3 * idScore;
+    if (score >= 0.6 && (!best || score > best.score)) {
+      best = { id, score, topic };
+    }
+  }
+  return best;
 }
 
 export { MEMORY_DIR, TOPICS_DIR, TOC_PATH };

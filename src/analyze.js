@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { execSync } from "child_process";
 import { join } from "path";
-import { upsertTopic, appendToTopic, MEMORY_DIR } from "./toc.js";
+import { upsertTopic, appendToTopic, loadToc, findSimilarTopic, readTopicFile, MEMORY_DIR } from "./toc.js";
 
 const INDEX_FILE = join(MEMORY_DIR, "sessions.jsonl");
 const PROCESSED_FILE = join(MEMORY_DIR, "processed.json");
@@ -49,7 +49,8 @@ function turnsToText(turns) {
 
 // --- extraction via claude ---
 
-const EXTRACT_PROMPT = `You are a memory extraction system. Analyze this conversation and extract structured information.
+function buildExtractPrompt(toc, existingFacts) {
+  let prompt = `You are a memory extraction system. Analyze this conversation and extract structured information.
 
 Return ONLY valid JSON with this exact schema:
 {
@@ -69,14 +70,33 @@ Rules:
 - decisions: choices made (e.g. "will use topic-scoped memory instead of flat summarization")
 - if the conversation has no meaningful content, return {"skip": true}
 - deduplicate — don't extract things that are essentially the same fact reworded
-
-CONVERSATION:
 `;
 
-function extract(conversationText) {
+  const topicEntries = Object.entries(toc.topics || {});
+  if (topicEntries.length > 0) {
+    prompt += `\nExisting topics:\n`;
+    for (const [id, t] of topicEntries) {
+      prompt += `- ${id}: ${t.summary} (keywords: ${t.keywords.join(", ")})\n`;
+    }
+    prompt += `\nIf this conversation matches an existing topic, use that topic's id. Only create a new topic if no existing topic fits.\n`;
+  }
+
+  if (existingFacts && existingFacts.length > 0) {
+    prompt += `\nKnown facts for the matched topic (DO NOT re-extract these):\n`;
+    for (const fact of existingFacts) {
+      prompt += `- ${fact}\n`;
+    }
+  }
+
+  prompt += `\nCONVERSATION:\n`;
+  return prompt;
+}
+
+function extract(conversationText, toc, existingFacts) {
   try {
+    const prompt = buildExtractPrompt(toc || { topics: {} }, existingFacts || []);
     const result = execSync("claude -p", {
-      input: EXTRACT_PROMPT + conversationText,
+      input: prompt + conversationText,
       encoding: "utf-8",
       maxBuffer: 2 * 1024 * 1024,
       timeout: 120_000,
@@ -138,7 +158,24 @@ function analyzeSession(session) {
   console.log(`  ${textTurns.length} turns, ${text.length} chars`);
   console.log("  extracting...");
 
-  const result = extract(text);
+  // Load TOC for topic-aware extraction
+  const toc = loadToc();
+
+  // Preliminary keyword match to find likely existing topic and its facts
+  let existingFacts = [];
+  const lower = text.toLowerCase();
+  for (const [id, topic] of Object.entries(toc.topics || {})) {
+    const hits = topic.keywords.filter(kw => lower.includes(kw.toLowerCase())).length;
+    if (hits >= 2) {
+      const content = readTopicFile(id);
+      if (content) {
+        existingFacts = content.split("\n").filter(l => l.startsWith("- ")).map(l => l.replace(/^- /, "").replace(/ \[.*\]$/, ""));
+      }
+      break;
+    }
+  }
+
+  const result = extract(text, toc, existingFacts);
 
   if (!result || result.skip) {
     console.log("  nothing meaningful to extract");
@@ -146,18 +183,24 @@ function analyzeSession(session) {
     return;
   }
 
-  // upsert topic in TOC and create/update topic file
-  const topicId = result.topic.id;
+  // Check for similar existing topic before creating new one
+  let topicId = result.topic.id;
+  const match = findSimilarTopic(topicId, result.topic.keywords);
+  if (match) {
+    console.log(`  → matched existing topic: ${match.id} (score: ${match.score.toFixed(2)})`);
+    topicId = match.id;
+  }
+
   upsertTopic(topicId, {
     keywords: result.topic.keywords,
     summary: result.topic.summary,
   });
 
   for (const fact of result.context || []) {
-    appendToTopic(topicId, "Context", fact);
+    appendToTopic(topicId, "Context", fact, session.session_id);
   }
   for (const decision of result.decisions || []) {
-    appendToTopic(topicId, "Decisions", decision);
+    appendToTopic(topicId, "Decisions", decision, session.session_id);
   }
 
   markProcessed(session.session_id, result);
