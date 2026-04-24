@@ -7,15 +7,15 @@
 
 ### Topic Management
 
-- [ ] **TOPC-01**: Analyzer checks existing TOC before creating new topics — merges into existing when semantically similar
-- [ ] **TOPC-02**: Topics with overlapping keywords/content are detected and merged into a single topic file
-- [ ] **TOPC-03**: Merged topics combine context entries, decisions, and keywords without duplication
+- [x] **TOPC-01**: Analyzer checks existing TOC before creating new topics — merges into existing when semantically similar
+- [x] **TOPC-02**: Topics with overlapping keywords/content are detected and merged into a single topic file
+- [x] **TOPC-03**: Merged topics combine context entries, decisions, and keywords without duplication
 
 ### Fact Quality
 
-- [ ] **FACT-01**: Extraction prompt receives existing topic facts so Claude skips already-known information
-- [ ] **FACT-02**: Near-duplicate facts within a topic are detected and deduplicated
-- [ ] **FACT-03**: Facts include source session reference for traceability
+- [x] **FACT-01**: Extraction prompt receives existing topic facts so Claude skips already-known information
+- [x] **FACT-02**: Near-duplicate facts within a topic are detected and deduplicated
+- [x] **FACT-03**: Facts include source session reference for traceability
 
 ### Working Memory
 
@@ -68,12 +68,12 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| TOPC-01 | Phase 1 | Pending |
-| TOPC-02 | Phase 1 | Pending |
-| TOPC-03 | Phase 1 | Pending |
-| FACT-01 | Phase 1 | Pending |
-| FACT-02 | Phase 1 | Pending |
-| FACT-03 | Phase 1 | Pending |
+| TOPC-01 | Phase 1 | ✓ Done |
+| TOPC-02 | Phase 1 | ✓ Done |
+| TOPC-03 | Phase 1 | ✓ Done |
+| FACT-01 | Phase 1 | ✓ Done |
+| FACT-02 | Phase 1 | ✓ Done |
+| FACT-03 | Phase 1 | ✓ Done |
 | WMEM-01 | Phase 2 | Pending |
 | WMEM-02 | Phase 2 | Pending |
 | WMEM-03 | Phase 2 | Pending |

@@ -91,7 +91,7 @@
 
 | # | Phase | Requirements | Success Criteria |
 |---|-------|-------------|------------------|
-| 1 | Topic & Fact Deduplication | TOPC-01, TOPC-02, TOPC-03, FACT-01, FACT-02, FACT-03 | 4 |
+| 1 | Topic & Fact Deduplication | TOPC-01, TOPC-02, TOPC-03, FACT-01, FACT-02, FACT-03 | 4 | ✓ Complete (2026-04-24) |
 | 2 | Working Memory | WMEM-01, WMEM-02, WMEM-03 | 3 |
 | 3 | Embedding-Based Retrieval | SEMR-01, SEMR-02, SEMR-03, SEMR-04 | 4 |
 | 4 | Relevance Scoring & Decay | RELV-01, RELV-02, RELV-03, RELV-04 | 4 |

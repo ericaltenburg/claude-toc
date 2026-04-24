@@ -21,12 +21,12 @@ Conversations with Claude should build persistent, structured knowledge that imp
 - ✓ Per-turn context injection on keyword match — v0.1
 - ✓ Periodic mid-session analysis (every N turns) — v0.1
 - ✓ Background analysis on session end — v0.1
+- ✓ Topic deduplication — Phase 1
+- ✓ Fact deduplication — Phase 1
+- ✓ Topic merging — Phase 1
 
 ### Active
 
-- [ ] Topic deduplication — analyzer checks existing topics before creating new ones
-- [ ] Fact deduplication — feed existing facts into extraction prompt to avoid redundancy
-- [ ] Topic merging — combine topics that cover the same domain
 - [ ] Working memory layer — PreCompact hook to preserve active context before compaction
 - [ ] Embedding-based topic detection — replace keyword matching with semantic similarity
 - [ ] Importance scoring — weight facts by recency, frequency, and relevance
@@ -90,4 +90,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-24 after initialization*
+*Last updated: 2026-04-24 after Phase 1 completion*
