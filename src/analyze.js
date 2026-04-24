@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { execSync } from "child_process";
 import { join } from "path";
-import { upsertTopic, appendToTopic, loadToc, findSimilarTopic, readTopicFile, MEMORY_DIR } from "./toc.js";
+import { upsertTopic, appendToTopic, loadToc, findSimilarTopic, readTopicFile, mergeTopics, pickMergeWinner, MEMORY_DIR } from "./toc.js";
 
 const INDEX_FILE = join(MEMORY_DIR, "sessions.jsonl");
 const PROCESSED_FILE = join(MEMORY_DIR, "processed.json");
@@ -211,6 +211,33 @@ function analyzeSession(session) {
 }
 
 function main() {
+  const arg = process.argv[2];
+
+  if (arg === "--dedup") {
+    const toc = loadToc();
+    const ids = Object.keys(toc.topics);
+    const merged = new Set();
+    let mergeCount = 0;
+
+    for (let i = 0; i < ids.length; i++) {
+      if (merged.has(ids[i])) continue;
+      for (let j = i + 1; j < ids.length; j++) {
+        if (merged.has(ids[j])) continue;
+        const match = findSimilarTopic(ids[j], toc.topics[ids[j]].keywords);
+        if (match && match.id === ids[i] && match.score >= 0.6) {
+          const { winnerId, loserId } = pickMergeWinner(ids[i], ids[j]);
+          mergeTopics(winnerId, loserId);
+          merged.add(loserId);
+          mergeCount++;
+          console.log(`Merged ${loserId} → ${winnerId} (score: ${match.score.toFixed(2)})`);
+        }
+      }
+    }
+    const remaining = ids.length - merged.size;
+    console.log(`Merged ${mergeCount} topic pair(s). ${remaining} topics remain.`);
+    return;
+  }
+
   if (!existsSync(INDEX_FILE)) {
     console.log("No sessions indexed yet.");
     process.exit(0);
@@ -222,7 +249,6 @@ function main() {
     .map((l) => JSON.parse(l));
 
   const processed = loadProcessed();
-  const arg = process.argv[2];
 
   if (arg === "--all") {
     const unprocessed = sessions.filter((s) => !processed[s.session_id]);

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "fs";
 import { join } from "path";
 
 const MEMORY_DIR = join(import.meta.dirname, "..", "memory");
@@ -108,9 +108,17 @@ export function appendToTopic(topicId, section, entry, sessionId) {
     const nextSection = content.indexOf("\n## ", afterHeader);
     const insertAt = nextSection === -1 ? content.length : nextSection;
 
-    // check for duplicate
+    // check for duplicate (substring)
     const sectionContent = content.slice(afterHeader, insertAt);
     if (sectionContent.includes(entry.slice(0, 60))) return; // skip dupe
+
+    // check for duplicate (normalized word overlap)
+    const normalize = (s) => new Set(s.toLowerCase().split(/\s+/).filter(w => w.length > 2));
+    const newWords = normalize(entry);
+    for (const line of sectionContent.split("\n").filter(l => l.startsWith("- "))) {
+      const existingFact = line.replace(/^- /, "").replace(/ \[session:.*\]$/, "").replace(/ \[\d{4}-\d{2}-\d{2}\]$/, "");
+      if (jaccardSimilarity(newWords, normalize(existingFact)) >= 0.8) return; // skip near-dupe
+    }
 
     writeFileSync(
       topicFile,
@@ -188,6 +196,64 @@ export function findSimilarTopic(candidateId, candidateKeywords) {
     }
   }
   return best;
+}
+
+// --- Merging ---
+
+export function pickMergeWinner(idA, idB) {
+  const toc = loadToc();
+  const a = toc.topics[idA], b = toc.topics[idB];
+  if (!a || !b) return null;
+  if (a.entries !== b.entries) {
+    return a.entries > b.entries ? { winnerId: idA, loserId: idB } : { winnerId: idB, loserId: idA };
+  }
+  // tie-break: older topic wins
+  return a.last_active <= b.last_active ? { winnerId: idA, loserId: idB } : { winnerId: idB, loserId: idA };
+}
+
+export function mergeTopics(winnerId, loserId) {
+  const toc = loadToc();
+  const winnerTopic = toc.topics[winnerId];
+  const loserTopic = toc.topics[loserId];
+  if (!winnerTopic || !loserTopic) return;
+
+  const winnerPath = join(TOPICS_DIR, `${winnerId}.md`);
+  const loserPath = join(TOPICS_DIR, `${loserId}.md`);
+  if (!existsSync(loserPath)) return;
+
+  // Read loser content and transfer facts
+  const loserContent = readFileSync(loserPath, "utf-8");
+  for (const section of ["Context", "Decisions"]) {
+    const header = `## ${section}`;
+    const idx = loserContent.indexOf(header);
+    if (idx === -1) continue;
+    const afterHeader = loserContent.indexOf("\n", idx) + 1;
+    const nextSection = loserContent.indexOf("\n## ", afterHeader);
+    const block = nextSection === -1 ? loserContent.slice(afterHeader) : loserContent.slice(afterHeader, nextSection);
+    for (const line of block.split("\n").filter(l => l.startsWith("- "))) {
+      const fact = line.replace(/^- /, "");
+      appendToTopic(winnerId, section, fact);
+    }
+  }
+
+  // Merge keywords (union)
+  winnerTopic.keywords = [...new Set([...winnerTopic.keywords, ...loserTopic.keywords])];
+
+  // Keep longer summary
+  if ((loserTopic.summary || "").length > (winnerTopic.summary || "").length) {
+    winnerTopic.summary = loserTopic.summary;
+  }
+
+  // Update winner entry count
+  winnerTopic.entries = countEntries(winnerId);
+  winnerTopic.last_active = new Date().toISOString();
+
+  // Tombstone loser
+  renameSync(loserPath, loserPath.replace(".md", ".merged.md"));
+
+  // Remove loser from TOC
+  delete toc.topics[loserId];
+  saveToc(toc);
 }
 
 export { MEMORY_DIR, TOPICS_DIR, TOC_PATH };
