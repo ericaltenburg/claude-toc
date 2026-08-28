@@ -1,63 +1,35 @@
-<!-- GSD:project-start source:PROJECT.md -->
-## Project
+# claude-toc
 
-**claude-toc**
+Topic-scoped memory for Claude Code: distil past sessions into per-topic fact files, then query them on demand.
 
-A topic-scoped memory system for Claude Code that replaces lossy context summarization with structured, topic-aware memory. It passively captures conversations via hooks, extracts durable facts and decisions into topic files, and dynamically injects relevant context back into sessions — all without user intervention.
+## Status: the code on disk is a POC whose retrieval half never ran
 
-**Core Value:** Conversations with Claude should build persistent, structured knowledge that improves future sessions automatically — no manual memory management required.
+Read this before trusting anything in `hooks/` or `src/`.
 
-### Constraints
+The write path works and has produced a real corpus (41 topic files, four months). The read path has never executed once: `toc-logger.cjs` emits `hookSpecificOutput` without the required `hookEventName`, so every payload was rejected from the initial commit onward. Its keyword matcher is also unsafe, doing raw substring tests that match `tps` inside every `https://`.
 
-- **Hook timeout**: Hooks must complete in <5 seconds — no heavy computation in the hot path
-- **Token budget**: Injected context must stay under ~500 tokens to avoid bloating prompts
-- **Zero friction**: User must never need to run commands or change workflow — everything is automatic
-- **No dependencies**: Hooks use Node.js stdlib only (CommonJS, no npm packages)
-- **Bedrock auth**: Analysis calls require ada credentials via claudecode profile
-<!-- GSD:project-end -->
+Both are being replaced rather than fixed. Treat the existing injection code as an artifact.
 
-<!-- GSD:stack-start source:STACK.md -->
-## Technology Stack
+## Design
 
-Technology stack not yet documented. Will populate after codebase mapping or first phase.
-<!-- GSD:stack-end -->
+`docs/superpowers/specs/2026-08-28-claude-toc-pull-memory-design.md` is authoritative for architecture, schema, components, and rollout. Read it before changing `hooks/` or `src/`.
 
-<!-- GSD:conventions-start source:CONVENTIONS.md -->
-## Conventions
+The shape in one line: a `UserPromptSubmit` hook sweeps transcript mtimes and spawns detached extraction, and retrieval happens only when the user runs `/toc-search`.
 
-Conventions not yet established. Will populate as patterns emerge during development.
-<!-- GSD:conventions-end -->
+Retrieval is **pull**. The user asks; nothing is injected speculatively. Earlier versions of this file claimed the opposite.
 
-<!-- GSD:architecture-start source:ARCHITECTURE.md -->
-## Architecture
+## Working here
 
-Architecture not yet mapped. Follow existing patterns found in the codebase.
-<!-- GSD:architecture-end -->
+**Markdown is the source of truth.** `memory/topics/*.md` and `memory/toc.json` are canonical and tracked. `memory/index.db` is derived, so dropping and rebuilding it is always safe. Runtime state is gitignored and recovering it is never a goal.
 
-<!-- GSD:skills-start source:skills/ -->
-## Project Skills
+**Extraction eats its own output unless excluded.** `claude -p` persists a session transcript, so extractor runs land in `~/.claude/projects/` looking exactly like real work, and 82 such transcripts already exist. Anything that globs transcripts filters them by the `--session-id` values recorded in `memory/state.json` and by the extractor's fixed cwd.
 
-No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skills/`, `.cursor/skills/`, or `.github/skills/` with a `SKILL.md` index file.
-<!-- GSD:skills-end -->
+**Hooks exit 0 and write nothing.** A hook emitting a malformed payload discards its own output and surfaces an error on every prompt the user sends. The sweep hook does glob, stat, spawn, exit.
 
-<!-- GSD:workflow-start source:GSD defaults -->
-## GSD Workflow Enforcement
+**Facts carry a date and a session id**, as `- text [session:abcd1234, 2026-08-27]`. An older bare `[2026-08-27]` form also exists in the corpus, so parsers accept both.
 
-Before using Edit, Write, or other file-changing tools, start work through a GSD command so planning artifacts and execution context stay in sync.
+## Constraints
 
-Use these entry points:
-- `/gsd-quick` for small fixes, doc updates, and ad-hoc tasks
-- `/gsd-debug` for investigation and bug fixing
-- `/gsd-execute-phase` for planned phase work
-
-Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
-<!-- GSD:workflow-end -->
-
-
-
-<!-- GSD:profile-start -->
-## Developer Profile
-
-> Profile not yet configured. Run `/gsd-profile-user` to generate your developer profile.
-> This section is managed by `generate-claude-profile` -- do not edit manually.
-<!-- GSD:profile-end -->
+- Hooks: Node stdlib only, CommonJS, complete in under 5 seconds. `src/` may take dependencies.
+- Extraction runs on Bedrock through the `claudecode` AWS profile, requiring ada credentials.
+- Extraction uses Haiku 4.5, falling back to Sonnet 5 when a slice exceeds the 200K context window.
