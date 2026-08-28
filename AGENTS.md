@@ -20,7 +20,7 @@ Retrieval is **pull**. The user asks; nothing is injected speculatively. Earlier
 
 ## Working here
 
-**The corpus lives outside this repo, at `~/.claude/claude-toc/`.** This repo is public and the corpus is distilled from work sessions, holding internal service names, account ids, ticket ids, and hostnames. Keeping it here meant one `git add -A` from publishing it, so it moved out. Only source and planning docs live in the repo. Write corpus data to `~/.claude/claude-toc/`, never under the repo.
+**The corpus lives outside this repo, at `~/.claude/claude-toc/`.** This repo is public and the corpus is distilled from work sessions, holding internal service names, account ids, ticket ids, and hostnames. Keeping it here meant one `git add -A` from publishing it, so it moved out. Only source and planning docs live in the repo. Write corpus data to `~/.claude/claude-toc/`, never under the repo. Test fixtures and doc examples use synthetic facts; the eval's expected values live with the corpus.
 
 **Markdown is the source of truth.** `topics/*.md` and `toc.json` are canonical; `index.db` is derived, so dropping and rebuilding it is always safe. The corpus is irreplaceable and has no git backup, so treat local deletion as permanent.
 
