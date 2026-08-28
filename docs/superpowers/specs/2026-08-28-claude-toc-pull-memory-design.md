@@ -32,7 +32,9 @@ Invert the model. Stop pushing speculative context into every prompt; expose mem
 | Extraction model | Haiku 4.5, Sonnet 5 fallback | $1/$5 per 1M versus $5/$25 for the current Opus 4.6. Fact extraction is information retrieval, not reasoning. |
 | Backfill | All 614 unprocessed transcripts, newest first | Search quality is bounded by coverage. |
 
-Markdown stays the source of truth. `index.db` is disposable and rebuildable, so the corpus is never trapped in a binary and stays greppable and git-diffable.
+Markdown stays the source of truth. `index.db` is disposable and rebuildable, so the corpus is never trapped in a binary and stays greppable.
+
+**`memory/` is never tracked in git.** This repo is public, and the corpus contains 20 AWS account ids, 19 internal hostnames, 12 ticket ids, 41 internal package names, and 6 customer ids extracted from work sessions. Only source and planning docs are tracked. The corpus therefore has no git backup, so it needs a private backup mechanism, tracked as an open question below.
 
 ## Architecture
 
@@ -183,7 +185,7 @@ Ordered so the cheap, reversible parts prove the idea before money is spent.
 1. **Read path first, zero extraction.** Index the existing 41 topics and 4650 prompts. Verify `/toc-search` reproduces the 8/27 reconstruction. If search is not useful against the corpus that already exists, stop here having spent nothing.
 2. **Wire the sweep hook.** Watch for a day on new sessions: no hook errors, offsets advancing, extractor sessions excluded.
 3. **Backfill in batches of ~50, newest first.** Cost checkpoint after batch one to validate the estimate before committing to all 614.
-4. **Fix git hygiene.** Gitignore `memory/` runtime state and `index.db`; keep the 41 topic files tracked. Clears the 244 dirty files.
+4. **Fix git hygiene.** Gitignore `memory/` wholesale and untrack what was previously committed. Clears the 244 dirty files. Done on 2026-08-28.
 
 Step 1 is the honest kill point. If the read path is not worth it, the right answer is to delete the project, known for the price of an afternoon rather than a backfill.
 
@@ -204,4 +206,6 @@ These are first-party API rates. Extraction currently runs through Bedrock (`AWS
 ## Open questions
 
 - The exact Bedrock model id for Haiku 4.5 needs verifying against what the `claudecode` profile exposes. The first-party id is `claude-haiku-4-5`.
+- **How the corpus gets backed up.** It is 41 files of irreplaceable extracted facts living only on local disk, and git is not an option while this repo is public. Options: make the repo private and track it, a separate private repo, or rely on Time Machine or iCloud.
+- **Whether to purge `memory/` from pushed public history.** The April-era snapshot on `origin/master` exposes one internal package name and `code.amazon.com`, which is minor but nonzero.
 - Whether `/toc-search` should default to searching both facts and prompts, or take a flag to scope to one. Resolve after step 1, against real queries.

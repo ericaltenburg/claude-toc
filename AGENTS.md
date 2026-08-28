@@ -20,7 +20,9 @@ Retrieval is **pull**. The user asks; nothing is injected speculatively. Earlier
 
 ## Working here
 
-**Markdown is the source of truth.** `memory/topics/*.md` and `memory/toc.json` are canonical and tracked. `memory/index.db` is derived, so dropping and rebuilding it is always safe. Runtime state is gitignored and recovering it is never a goal.
+**Markdown is the source of truth.** `memory/topics/*.md` and `memory/toc.json` are canonical. `memory/index.db` is derived, so dropping and rebuilding it is always safe.
+
+**`memory/` is gitignored and stays that way.** This repo is public, and the corpus holds internal service names, account ids, ticket ids, and hostnames extracted from work sessions. Only source and planning docs are tracked here. The corpus is irreplaceable and has no git backup, so treat local deletion as permanent.
 
 **Extraction eats its own output unless excluded.** `claude -p` persists a session transcript, so extractor runs land in `~/.claude/projects/` looking exactly like real work, and 82 such transcripts already exist. Anything that globs transcripts filters them by the `--session-id` values recorded in `memory/state.json` and by the extractor's fixed cwd.
 
