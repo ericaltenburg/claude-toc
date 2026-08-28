@@ -35,3 +35,17 @@ Retrieval is **pull**. The user asks; nothing is injected speculatively. Earlier
 - Hooks: Node stdlib only, CommonJS, complete in under 5 seconds. `src/` may take dependencies.
 - Extraction runs on Bedrock through the `claudecode` AWS profile, requiring ada credentials.
 - Extraction uses Haiku 4.5, falling back to Sonnet 5 when a slice exceeds the 200K context window.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `ericaltenburg/claude-toc`, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, unchanged. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
