@@ -20,11 +20,11 @@ Retrieval is **pull**. The user asks; nothing is injected speculatively. Earlier
 
 ## Working here
 
-**Markdown is the source of truth.** `memory/topics/*.md` and `memory/toc.json` are canonical. `memory/index.db` is derived, so dropping and rebuilding it is always safe.
+**The corpus lives outside this repo, at `~/.claude/claude-toc/`.** This repo is public and the corpus is distilled from work sessions, holding internal service names, account ids, ticket ids, and hostnames. Keeping it here meant one `git add -A` from publishing it, so it moved out. Only source and planning docs live in the repo. Write corpus data to `~/.claude/claude-toc/`, never under the repo.
 
-**`memory/` is gitignored and stays that way.** This repo is public, and the corpus holds internal service names, account ids, ticket ids, and hostnames extracted from work sessions. Only source and planning docs are tracked here. The corpus is irreplaceable and has no git backup, so treat local deletion as permanent.
+**Markdown is the source of truth.** `topics/*.md` and `toc.json` are canonical; `index.db` is derived, so dropping and rebuilding it is always safe. The corpus is irreplaceable and has no git backup, so treat local deletion as permanent.
 
-**Extraction eats its own output unless excluded.** `claude -p` persists a session transcript, so extractor runs land in `~/.claude/projects/` looking exactly like real work, and 82 such transcripts already exist. Anything that globs transcripts filters them by the `--session-id` values recorded in `memory/state.json` and by the extractor's fixed cwd.
+**Extraction eats its own output unless excluded.** `claude -p` persists a session transcript, so extractor runs land in `~/.claude/projects/` looking exactly like real work, and 82 such transcripts already exist. Anything that globs transcripts filters them by the `--session-id` values recorded in `~/.claude/claude-toc/state.json` and by the extractor's fixed cwd.
 
 **Hooks exit 0 and write nothing.** A hook emitting a malformed payload discards its own output and surfaces an error on every prompt the user sends. The sweep hook does glob, stat, spawn, exit.
 

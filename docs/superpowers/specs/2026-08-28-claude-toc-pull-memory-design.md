@@ -34,7 +34,7 @@ Invert the model. Stop pushing speculative context into every prompt; expose mem
 
 Markdown stays the source of truth. `index.db` is disposable and rebuildable, so the corpus is never trapped in a binary and stays greppable.
 
-**`memory/` is never tracked in git.** This repo is public, and the corpus contains 20 AWS account ids, 19 internal hostnames, 12 ticket ids, 41 internal package names, and 6 customer ids extracted from work sessions. Only source and planning docs are tracked. The corpus therefore has no git backup, so it needs a private backup mechanism, tracked as an open question below.
+**The corpus lives outside the repo, at `~/.claude/claude-toc/`.** This repo is public and the corpus is distilled from work sessions, so storing it alongside source was a standing hazard: a single `git add -A` would publish it. Relocating removes the failure mode structurally rather than relying on `.gitignore`. Only source and planning docs live in the repo. The corpus has no git backup, so it needs a private backup mechanism, tracked as an open question below.
 
 ## Architecture
 
@@ -51,7 +51,8 @@ WRITE PATH (expensive, async, best-effort)
             call Haiku, upsert topic, append dated facts, advance offset
 
 INDEX PATH (cheap, derived, disposable)
-  index-build.js: memory/topics/*.md + toc.json + history.jsonl -> memory/index.db
+  index-build.js: ~/.claude/claude-toc/topics/*.md + toc.json + history.jsonl
+                  -> ~/.claude/claude-toc/index.db
 
 READ PATH (on demand)
   /toc-search "what did we do yesterday"
@@ -122,7 +123,7 @@ Three deliberate choices:
 | `src/schema.sql` | Schema above, with a `schema_version` row. |
 | `src/backfill.js` | One-off 614-session run. Resumable, rate-limited, newest first, excludes the 82 by content sniff. |
 | `~/.claude/skills/toc-search/SKILL.md` | Read path. Schema reference, query recipes, presentation rules. |
-| `memory/state.json` | Offsets, excluded session ids, fail counts, last-swept timestamp. |
+| `~/.claude/claude-toc/state.json` | Offsets, excluded session ids, fail counts, last-swept timestamp. |
 
 **Removed:** `hooks/toc-inject.cjs`, the injection block in `toc-logger.cjs` (lines 54 to 101), the `SessionEnd` hook registration, the keyword matcher in `src/toc.js`, `src/read-session.js` (superseded by SQL), the `ANALYZE_EVERY` turn counters and their 208 leaked `.turns-*` files, `processed.json` and `.analyzing` (folded into `state.json`).
 
@@ -161,11 +162,11 @@ Topic markdown writes are append-only and happen only after the model call succe
 
 The gap that let this project die quietly was having success criteria and never measuring them, so the important test is not a unit test.
 
-**Golden-query eval, run after every index build.** A dozen questions with known-correct answers, seeded from the 2026-08-27 reconstruction already verified by hand:
+**Golden-query eval, run after every index build.** A dozen questions with known-correct answers, seeded from a hand-verified reconstruction of one day's sessions. The suite lives with the corpus at `~/.claude/claude-toc/eval.json`, not in this public repo, so the expected values can name real topics:
 
-- "what did we do yesterday" surfaces the OpenSearch i8g migration, the ALCS appupgrade MCM, and the ALVSS lambda work
-- "when did we decide on i8g over i7i" returns a fact dated 2026-08-27
-- "opensearch masters" ranks `opensearch_i3_to_i8g_migration` first
+- "what did we do yesterday" surfaces all three distinct workstreams recorded for that date, keyed by topic id rather than named here
+- a query naming a decision from a known session returns a fact carrying that session's date
+- a two-word query drawn from a topic's subject matter ranks that topic first
 
 If the suite passes and a query still feels wrong, the suite was incomplete and gains a case.
 
@@ -185,7 +186,7 @@ Ordered so the cheap, reversible parts prove the idea before money is spent.
 1. **Read path first, zero extraction.** Index the existing 41 topics and 4650 prompts. Verify `/toc-search` reproduces the 8/27 reconstruction. If search is not useful against the corpus that already exists, stop here having spent nothing.
 2. **Wire the sweep hook.** Watch for a day on new sessions: no hook errors, offsets advancing, extractor sessions excluded.
 3. **Backfill in batches of ~50, newest first.** Cost checkpoint after batch one to validate the estimate before committing to all 614.
-4. **Fix git hygiene.** Gitignore `memory/` wholesale and untrack what was previously committed. Clears the 244 dirty files. Done on 2026-08-28.
+4. **Fix git hygiene.** Move the corpus to `~/.claude/claude-toc/`, untrack what was previously committed, and gitignore `memory/` as a backstop. Clears the 244 dirty files. Done on 2026-08-28.
 
 Step 1 is the honest kill point. If the read path is not worth it, the right answer is to delete the project, known for the price of an afternoon rather than a backfill.
 
@@ -207,5 +208,5 @@ These are first-party API rates. Extraction currently runs through Bedrock (`AWS
 
 - The exact Bedrock model id for Haiku 4.5 needs verifying against what the `claudecode` profile exposes. The first-party id is `claude-haiku-4-5`.
 - **How the corpus gets backed up.** It is 41 files of irreplaceable extracted facts living only on local disk, and git is not an option while this repo is public. Options: make the repo private and track it, a separate private repo, or rely on Time Machine or iCloud.
-- **Whether to purge `memory/` from pushed public history.** The April-era snapshot on `origin/master` exposes one internal package name and `code.amazon.com`, which is minor but nonzero.
+- **Whether to purge the April-era corpus snapshot from pushed public history.** It exposes one internal service name and one internal hostname, minor but nonzero. Untracking does not remove it.
 - Whether `/toc-search` should default to searching both facts and prompts, or take a flag to scope to one. Resolve after step 1, against real queries.
