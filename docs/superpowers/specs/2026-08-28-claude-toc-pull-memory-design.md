@@ -117,7 +117,7 @@ Three deliberate choices:
 
 | File | Job |
 |---|---|
-| `hooks/toc-sweep.cjs` | Hook entry. Glob, stat, debounce, lock, pick candidates, detached spawn, exit 0, emit nothing. |
+| `hooks/toc-sweep.cjs` | Hook entry. Glob, stat, debounce, lock, pick candidates, detached spawn, exit 0, emit nothing. Node stdlib only, CommonJS, completes in under 5 seconds. `src/` may take dependencies. |
 | `src/extract.js` | One session slice to facts. Existing `analyze.js` logic plus `--session-id`, fixed cwd, Haiku, chunking with Sonnet 5 fallback. |
 | `src/index-build.js` | Markdown plus `history.jsonl` to `index.db`. Idempotent; incremental and full rebuild. |
 | `src/schema.sql` | Schema above, with a `schema_version` row. |
@@ -171,6 +171,8 @@ The gap that let this project die quietly was having success criteria and never 
 If the suite passes and a query still feels wrong, the suite was incomplete and gains a case.
 
 **Unit tests** where silent wrongness is likely: the markdown fact parser across both date formats plus malformed and unicode lines, `local_date` across a DST boundary and an after-8pm-Eastern timestamp, offset advancement, exclusion-set handling.
+
+**Test fixtures use synthetic facts.** Only the eval's expected values reference real topics, which is why the suite lives with the corpus rather than in this public repo.
 
 **Two regression guards for bugs found on 2026-08-28:**
 
