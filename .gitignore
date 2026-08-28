@@ -1,1 +1,7 @@
 node_modules/
+.DS_Store
+
+# Session-derived memory. NEVER tracked: this repo is public and the corpus
+# contains internal service names, account ids, ticket ids, and hostnames
+# extracted from work sessions. Back it up privately, not here.
+memory/
