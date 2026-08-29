@@ -25,7 +25,7 @@ const TERM = /[\p{L}\p{N}_]+/gu;
 const SHORTEST_USABLE_TERM = 2;
 
 const MATCH_EVERY_ROW_THE_FILTERS_ALLOW = { match: null, matchesNothing: false };
-const MATCH_NO_ROW = { match: null, matchesNothing: true };
+const MATCH_NOTHING = { match: null, matchesNothing: true };
 const NO_ROWS = { rows: [], total: 0, match: null };
 
 function quoted(term) {
@@ -53,7 +53,7 @@ function matchFor(text) {
   if (!trimmed) return MATCH_EVERY_ROW_THE_FILTERS_ALLOW;
 
   const match = ftsQuery(trimmed);
-  return match ? { match, matchesNothing: false } : MATCH_NO_ROW;
+  return match ? { match, matchesNothing: false } : MATCH_NOTHING;
 }
 
 // --- Search ---
@@ -110,7 +110,7 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
     const fellBackFrom =
       result.facts?.fellBackFrom ?? result.prompts?.fellBackFrom ?? result.overview?.fellBackFrom;
     if (log) {
-      logSearchOrCarryOn(config, now, { query, mode, rows: result.rows, source, project, fellBackFrom });
+      logSearchBestEffort(config, now, { query, mode, rows: result.rows, source, project, fellBackFrom });
     }
     return result;
   }
@@ -203,7 +203,7 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
     assertReadOnly(statement);
     refresh();
     const rows = db.prepare(statement).all(...params).map(withoutNullPrototype);
-    logSearchOrCarryOn(config, now, { query: statement, mode: "sql", rows: rows.length, source: "explicit" });
+    logSearchBestEffort(config, now, { query: statement, mode: "sql", rows: rows.length, source: "explicit" });
     return rows;
   }
 
@@ -288,13 +288,11 @@ function conditions() {
   };
 }
 
-const FACT_SESSION_ID_IS_A_PREFIX_OF = "s.session_id like f.session || '%'";
-const FACT_HAS_NO_SESSION_BUT_ITS_TOPIC_WAS_FED_BY = "f.session is null and s.topic = f.topic";
 const FACT_BELONGS_TO_PROJECT = `exists (
   select 1 from sessions s
   where s.project = ?
-    and ((f.session is not null and ${FACT_SESSION_ID_IS_A_PREFIX_OF})
-      or (${FACT_HAS_NO_SESSION_BUT_ITS_TOPIC_WAS_FED_BY})))`;
+    and ((f.session is not null and s.session_id like f.session || '%')
+      or (f.session is null and s.topic = f.topic)))`;
 
 function factPlan(match, { project, since, until, topic, section, session }) {
   const filter = conditions();
@@ -358,7 +356,7 @@ function withoutNullPrototype(row) {
 
 // --- The search log ---
 
-function logSearchOrCarryOn(config, now, { query, mode, rows, source, project, fellBackFrom }) {
+function logSearchBestEffort(config, now, { query, mode, rows, source, project, fellBackFrom }) {
   try {
     mkdirSync(config.corpusDir, { recursive: true });
     appendFileSync(
