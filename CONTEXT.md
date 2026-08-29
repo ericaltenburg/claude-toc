@@ -97,6 +97,15 @@ Turning a slice of one session's transcript into facts, and appending them to a
 topic. Extraction is expensive, asynchronous, and best-effort. It costs money and
 runs behind the live conversation.
 
+## Quarantine
+
+A session extraction has given up on after repeated failure, recorded with its
+attempt count and last error so one bad transcript cannot block the queue.
+Quarantine is a state a session is put in, never a state a fact or topic has.
+
+Surfaced through search on request, because a failure nobody can see is the
+failure mode this project exists to correct.
+
 ## Sweep
 
 Deciding which sessions are ready for extraction and starting it. A sweep reads

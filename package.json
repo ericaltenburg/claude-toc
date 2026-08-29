@@ -8,7 +8,9 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "test": "node --disable-warning=ExperimentalWarning --test"
+    "test": "node --disable-warning=ExperimentalWarning --test",
+    "search": "./bin/toc-search",
+    "smoke": "./bin/toc-search --smoke"
   },
   "dependencies": {},
   "engines": {
