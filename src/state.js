@@ -6,9 +6,6 @@ const EXTRACTION_LEASE_MS = 300_000;
 const EMPTY = () => ({
   version: STATE_VERSION,
   processed: {},
-  // Sessions extraction has given up on, so one bad transcript cannot block the
-  // queue. Written by the sweep; read by search, which is how a quarantined
-  // session is surfaced without anyone reading a log.
   quarantined: {},
   extraction: null,
 });

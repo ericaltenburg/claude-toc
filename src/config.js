@@ -23,8 +23,6 @@ export function createConfig(overrides = {}, env = process.env) {
     statePath: join(corpusDir, "state.json"),
     indexPath: join(corpusDir, "index.db"),
     searchLogPath: join(corpusDir, "search.log"),
-    // The smoke queries name real topics, so they live with the corpus rather
-    // than in this public repository.
     smokeQueriesPath: join(corpusDir, "smoke-queries.json"),
     legacyProcessedPath: join(corpusDir, "processed.json"),
   });

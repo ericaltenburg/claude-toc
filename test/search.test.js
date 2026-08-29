@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { createSearch, ftsQuery, parseArgs } from "../src/search.js";
 import { createStateStore } from "../src/state.js";
 import {
+  AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
+  LATE_ON_26_AUGUST_IN_NEW_YORK,
   appendPrompts,
   appendSessions,
   REPO_ROOT,
@@ -14,6 +16,8 @@ import {
 } from "./support/corpus.js";
 
 const NY = "America/New_York";
+
+const FACT_WITHOUT_A_SESSION_ID = "- Catch-all alarm is noisy [2026-04-24]";
 
 const FACTS = {
   Context: [
@@ -49,9 +53,9 @@ test("a question returns ranked facts, each with its topic, section and date", (
 
     const result = search.search({ query: "variants", mode: "facts" });
 
-    // Ranked, so the order is bm25's: the shorter fact carrying the term wins.
+    const rankedByBm25ShorterFactFirst = result.facts.rows.map((row) => ({ ...row }));
     assert.deepEqual(
-      result.facts.rows.map((row) => ({ ...row })),
+      rankedByBm25ShorterFactFirst,
       [
         {
           topic: "broadcast_variants",
@@ -84,10 +88,10 @@ test("facts and prompts come back as separate result classes", () => {
     assert.equal(result.facts.rows.length, 2);
     assert.equal(result.prompts.rows.length, 1);
     assert.equal(result.prompts.rows[0].text, "how do variants work again?");
-    // The prompt is nowhere in the fact list: nothing blends the two.
     assert.equal(
       result.facts.rows.some((row) => row.text.includes("how do variants work")),
-      false
+      false,
+      "a prompt must never appear among the facts"
     );
   });
 });
@@ -144,10 +148,19 @@ test("an overview reports how many topics matched, not how many it showed", () =
 
     assert.equal(result.overview.rows.length, 20);
     assert.equal(result.overview.total, 25);
-    // And an overview honours a smaller limit while still reporting the total.
-    const capped = search.search({ query: "variants", mode: "overview", limit: 5 });
-    assert.equal(capped.overview.rows.length, 5);
-    assert.equal(capped.overview.total, 25);
+  });
+});
+
+test("an overview honours a smaller limit and still reports the total", () => {
+  withSearch((config, search) => {
+    for (let i = 0; i < 25; i++) {
+      writeTopic(config, `topic_${i}`, { Context: [`- Variants matter here [2026-05-12]`] });
+    }
+
+    const result = search.search({ query: "variants", mode: "overview", limit: 5 });
+
+    assert.equal(result.overview.rows.length, 5);
+    assert.equal(result.overview.total, 25);
   });
 });
 
@@ -162,9 +175,8 @@ test("a temporal question returns the right day's material", () => {
       ],
     });
     appendPrompts(config, [
-      // 23:30 on 26 August in New York, already the 27th in UTC.
-      { display: "wire up the retry", timestamp: Date.parse("2026-08-27T03:30:00Z") },
-      { display: "now ship it", timestamp: Date.parse("2026-08-27T15:00:00Z") },
+      { display: "wire up the retry", timestamp: LATE_ON_26_AUGUST_IN_NEW_YORK },
+      { display: "now ship it", timestamp: AFTERNOON_ON_27_AUGUST_IN_NEW_YORK },
     ]);
 
     const result = search.search({ query: "", date: "2026-08-26" });
@@ -199,10 +211,9 @@ test("refresh runs before the query, so a just-written fact is found", () => {
   withSearch((config, search) => {
     writeTopic(config, "broadcast_variants", FACTS);
 
-    // No explicit refresh call anywhere in this test.
     const result = search.search({ query: "variants", mode: "facts" });
 
-    assert.equal(result.facts.rows.length, 2);
+    assert.equal(result.facts.rows.length, 2, "search must refresh before it queries");
   });
 });
 
@@ -409,8 +420,7 @@ test("facts are scoped by the project of the session that produced them", () => 
 
 test("a fact carrying no session id stays visible to its topic's project", () => {
   withSearch((config, search) => {
-    // A line whose date parsed but whose session did not: the older format.
-    writeTopic(config, "alarm_tuning", { Context: ["- Catch-all alarm is noisy [2026-04-24]"] });
+    writeTopic(config, "alarm_tuning", { Context: [FACT_WITHOUT_A_SESSION_ID] });
     writeTopic(config, "other_topic", { Context: ["- Alarm noise elsewhere [2026-04-24]"] });
     appendSessions(config, [
       {
@@ -426,10 +436,10 @@ test("a fact carrying no session id stays visible to its topic's project", () =>
 
     const scoped = search.search({ query: "alarm", mode: "facts", project: "/work/aldis" });
 
-    // Kept, because its topic was fed by that project. Not put in every project.
     assert.deepEqual(
       scoped.facts.rows.map((row) => row.topic),
-      ["alarm_tuning"]
+      ["alarm_tuning"],
+      "kept because its topic was fed by that project, and not put in every project"
     );
   });
 });
@@ -461,8 +471,6 @@ test("a quarantined session can be surfaced on request", () => {
       },
     ]);
 
-    // No explicit refresh: surfacing a quarantined session refreshes like any
-    // other read, or its project and transcript come back null for no reason.
     const rows = search.quarantined();
 
     assert.equal(rows.length, 1);
@@ -475,7 +483,8 @@ test("a quarantined session can be surfaced on request", () => {
         error: "model returned no parsable facts",
         project: "/work/alcs",
         transcriptPath: "/t/14f63e34.jsonl",
-      }
+      },
+      "surfacing refreshes like any other read, so project and transcript are filled in"
     );
   });
 });

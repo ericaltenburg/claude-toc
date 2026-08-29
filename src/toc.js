@@ -36,17 +36,17 @@ export function createTopicStore(config) {
     };
 
     saveToc(toc);
-
-    // create topic file if it doesn't exist
-    const topicFile = topicPath(id);
-    if (!existsSync(topicFile)) {
-      writeFileSync(
-        topicFile,
-        `# ${id.replace(/_/g, " ")}\n\n## Context\n\n## Decisions\n`
-      );
-    }
+    createTopicFileUnlessPresent(id);
 
     return toc.topics[id];
+  }
+
+  function createTopicFileUnlessPresent(id) {
+    const topicFile = topicPath(id);
+    if (existsSync(topicFile)) return;
+
+    const headings = SECTIONS.map((section) => `## ${section}\n`).join("\n");
+    writeFileSync(topicFile, `# ${id.replace(/_/g, " ")}\n\n${headings}`);
   }
 
   // --- Topic file operations ---
@@ -56,30 +56,27 @@ export function createTopicStore(config) {
     if (!existsSync(topicFile)) return;
 
     const content = readFileSync(topicFile, "utf-8");
-    const ts = new Date().toISOString().slice(0, 10);
-    const sid = sessionId?.slice(0, 8) || "unknown";
-    const line = `- ${entry} [session:${sid}, ${ts}]\n`;
-    const header = `## ${section}`;
-
+    const line = factLine(entry, sessionId);
     const block = sectionBlock(content, section);
+
     if (!block) {
-      // section doesn't exist, add it
-      writeFileSync(topicFile, content + `\n${header}\n\n${line}`);
+      writeFileSync(topicFile, `${content}\n## ${section}\n\n${line}`);
+    } else if (isDuplicateFact(block.text, entry)) {
+      return;
     } else {
-      if (isDuplicateFact(block.text, entry)) return;
-      writeFileSync(
-        topicFile,
-        content.slice(0, block.end) + line + content.slice(block.end)
-      );
+      writeFileSync(topicFile, content.slice(0, block.end) + line + content.slice(block.end));
     }
 
-    // update TOC entry count
+    recountTocEntry(topicId);
+  }
+
+  function recountTocEntry(topicId) {
     const toc = loadToc();
-    if (toc.topics[topicId]) {
-      toc.topics[topicId].entries = countEntries(topicId);
-      toc.topics[topicId].last_active = new Date().toISOString();
-      saveToc(toc);
-    }
+    if (!toc.topics[topicId]) return;
+
+    toc.topics[topicId].entries = countEntries(topicId);
+    toc.topics[topicId].last_active = new Date().toISOString();
+    saveToc(toc);
   }
 
   function countEntries(topicId) {
@@ -113,18 +110,15 @@ export function createTopicStore(config) {
 
   function pickMergeWinner(idA, idB) {
     const toc = loadToc();
-    const a = toc.topics[idA],
-      b = toc.topics[idB];
+    const a = toc.topics[idA];
+    const b = toc.topics[idB];
     if (!a || !b) return null;
-    if (a.entries !== b.entries) {
-      return a.entries > b.entries
-        ? { winnerId: idA, loserId: idB }
-        : { winnerId: idB, loserId: idA };
-    }
-    // tie-break: older topic wins
-    return a.last_active <= b.last_active
-      ? { winnerId: idA, loserId: idB }
-      : { winnerId: idB, loserId: idA };
+
+    const mostFacts = a.entries > b.entries ? idA : idB;
+    const leastRecentlyActive = a.last_active <= b.last_active ? idA : idB;
+    const winnerId = a.entries === b.entries ? leastRecentlyActive : mostFacts;
+
+    return { winnerId, loserId: winnerId === idA ? idB : idA };
   }
 
   function mergeTopics(winnerId, loserId) {
@@ -136,36 +130,26 @@ export function createTopicStore(config) {
     const loserPath = topicPath(loserId);
     if (!existsSync(loserPath)) return;
 
-    // Read loser content and transfer facts
-    const loserContent = readFileSync(loserPath, "utf-8");
-    for (const section of ["Context", "Decisions"]) {
+    transferFacts(readFileSync(loserPath, "utf-8"), winnerId);
+
+    winnerTopic.keywords = union(winnerTopic.keywords, loserTopic.keywords);
+    winnerTopic.summary = longerSummary(winnerTopic, loserTopic);
+    winnerTopic.entries = countEntries(winnerId);
+    winnerTopic.last_active = new Date().toISOString();
+
+    tombstone(loserPath);
+    delete toc.topics[loserId];
+    saveToc(toc);
+  }
+
+  function transferFacts(loserContent, winnerId) {
+    for (const section of SECTIONS) {
       const block = sectionBlock(loserContent, section);
       if (!block) continue;
       for (const fact of factLines(block.text)) {
         appendToTopic(winnerId, section, fact);
       }
     }
-
-    // Merge keywords (union)
-    winnerTopic.keywords = [
-      ...new Set([...winnerTopic.keywords, ...loserTopic.keywords]),
-    ];
-
-    // Keep longer summary
-    if ((loserTopic.summary || "").length > (winnerTopic.summary || "").length) {
-      winnerTopic.summary = loserTopic.summary;
-    }
-
-    // Update winner entry count
-    winnerTopic.entries = countEntries(winnerId);
-    winnerTopic.last_active = new Date().toISOString();
-
-    // Tombstone loser
-    renameSync(loserPath, loserPath.replace(".md", ".merged.md"));
-
-    // Remove loser from TOC
-    delete toc.topics[loserId];
-    saveToc(toc);
   }
 
   function dedupTopics() {
@@ -198,6 +182,28 @@ export function createTopicStore(config) {
     findSimilarTopic,
     dedupTopics,
   };
+}
+
+const SECTIONS = ["Context", "Decisions"];
+const MERGED_TOMBSTONE = ".merged.md";
+const SESSION_ID_LENGTH_ON_A_FACT = 8;
+
+function factLine(entry, sessionId) {
+  const date = new Date().toISOString().slice(0, 10);
+  const session = sessionId?.slice(0, SESSION_ID_LENGTH_ON_A_FACT) || "unknown";
+  return `- ${entry} [session:${session}, ${date}]\n`;
+}
+
+function union(a, b) {
+  return [...new Set([...a, ...b])];
+}
+
+function longerSummary(a, b) {
+  return (b.summary || "").length > (a.summary || "").length ? b.summary : a.summary;
+}
+
+function tombstone(loserPath) {
+  renameSync(loserPath, loserPath.replace(".md", MERGED_TOMBSTONE));
 }
 
 function sectionBlock(content, section) {

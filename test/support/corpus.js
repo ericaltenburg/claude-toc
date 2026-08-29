@@ -45,11 +45,12 @@ export function runNode(script, { input = "", args = [], config, env = {} } = {}
   });
 }
 
-// Writes a synthetic topic file. Facts are given as whole markdown lines so a
-// test can exercise an exact historical format.
-export function writeTopic(config, id, sections) {
+export const LATE_ON_26_AUGUST_IN_NEW_YORK = Date.parse("2026-08-27T03:30:00Z");
+export const AFTERNOON_ON_27_AUGUST_IN_NEW_YORK = Date.parse("2026-08-27T15:00:00Z");
+
+export function writeTopic(config, id, wholeFactLinesBySection) {
   mkdirSync(config.topicsDir, { recursive: true });
-  const body = Object.entries(sections)
+  const body = Object.entries(wholeFactLinesBySection)
     .map(([section, facts]) => `## ${section}\n${facts.join("\n")}\n`)
     .join("\n");
   writeFileSync(join(config.topicsDir, `${id}.md`), `# ${id.replace(/_/g, " ")}\n\n${body}`);

@@ -13,13 +13,13 @@ const FACTS = {
   Decisions: ["- Will store variants in DynamoDB [session:316972f2, 2026-05-12]"],
 };
 
-// The wrapper picks the runtime, so the test hands it the one running the tests:
-// node:sqlite needs 22.5 or newer and the `node` on PATH may be older.
+const NODE_WITH_BUILTIN_SQLITE = process.execPath;
+
 function run(config, args) {
   return spawnSync(CLI, args, {
     encoding: "utf-8",
     timeout: 20_000,
-    env: corpusEnv(config, { CLAUDE_TOC_NODE: process.execPath }),
+    env: corpusEnv(config, { CLAUDE_TOC_NODE: NODE_WITH_BUILTIN_SQLITE }),
   });
 }
 
@@ -31,9 +31,7 @@ test("the read path's one command returns facts and prompts and stays silent on 
   const result = run(config, ["variants"]);
 
   assert.equal(result.status, 0);
-  // node:sqlite is experimental and warns on first use; a noisy read path would
-  // also make the sweep hook noisy once it opens the index.
-  assert.equal(result.stderr, "");
+  assert.equal(result.stderr, "", "the read path must write nothing to stderr");
   assert.match(result.stdout, /^FACTS {2}2 of 2$/m);
   assert.match(result.stdout, /broadcast_variants \| Decisions \| 2026-05-12 \| session 316972f2/);
   assert.match(result.stdout, /^PROMPTS {2}1 of 1$/m);

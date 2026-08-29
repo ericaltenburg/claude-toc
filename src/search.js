@@ -1,14 +1,4 @@
 #!/usr/bin/env node
-// claude-toc: Search — the read path.
-//
-// Two entry points, one behaviour. The library below is what a skill drives
-// through `bin/toc-search`; the CLI at the bottom is that wrapper's target.
-//
-// Deliberately not a tool with a fixed parameter schema: the flags cover the
-// shapes worth naming, and anything else is written as SQL by the caller
-// (`--sql`), which is what removes the need for a date parser or a
-// natural-language layer here.
-
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -16,16 +6,11 @@ import { createConfig } from "./config.js";
 import { openIndex } from "./search-index.js";
 import { createStateStore } from "./state.js";
 
-// A fact averages ~42 tokens, so twenty facts is ~850 tokens: cheaper than the
-// extra turn a drill-down would cost.
 export const FACT_LIMIT = 20;
 export const PROMPT_LIMIT = 10;
 
 // --- Query terms ---
 
-// Words that carry no signal in a question and would otherwise match most of
-// the corpus. Small on purpose: the tokeniser, not this list, is what makes
-// matching precise.
 const STOPWORDS = new Set(
   `a an and the of to in on for with about from by at or is are was were be been
    what when why how who which did do does done have has had i we my our it its
@@ -35,43 +20,40 @@ const STOPWORDS = new Set(
     .filter(Boolean)
 );
 
-// FTS5 spells its operators in upper case and its prefix search with a star.
-// Either signals a caller who wrote the expression deliberately, so it is
-// passed through untouched rather than being taken apart into terms.
-const EXPLICIT_EXPRESSION = /\b(?:AND|OR|NOT|NEAR)\b|[\p{L}\p{N}]\*/u;
-
+const FTS5_OPERATOR_OR_PREFIX_SEARCH = /\b(?:AND|OR|NOT|NEAR)\b|[\p{L}\p{N}]\*/u;
 const TERM = /[\p{L}\p{N}_]+/gu;
+const SHORTEST_USABLE_TERM = 2;
 
-// A one-character term is dropped because it matches too much; two characters
-// are kept, and word-boundary tokenisation is what keeps a two-letter term from
-// matching the inside of a longer word.
-const MIN_TERM_LENGTH = 2;
+const MATCH_EVERY_ROW_THE_FILTERS_ALLOW = { match: null, matchesNothing: false };
+const MATCH_NO_ROW = { match: null, matchesNothing: true };
+const NO_ROWS = { rows: [], total: 0, match: null };
+
+function quoted(term) {
+  return `"${term.replace(/"/g, '""')}"`;
+}
 
 export function termsQuery(text) {
   const terms = String(text ?? "").match(TERM) ?? [];
-  const usable = terms.filter((term) => term.length >= MIN_TERM_LENGTH);
+  const usable = terms.filter((term) => term.length >= SHORTEST_USABLE_TERM);
   const meaningful = usable.filter((term) => !STOPWORDS.has(term.toLowerCase()));
   const chosen = meaningful.length ? meaningful : usable;
   if (!chosen.length) return null;
-  return chosen.map((term) => `"${term.replace(/"/g, '""')}"`).join(" OR ");
+  return chosen.map(quoted).join(" OR ");
 }
 
 export function ftsQuery(text) {
   const trimmed = String(text ?? "").trim();
   if (!trimmed) return null;
-  if (EXPLICIT_EXPRESSION.test(trimmed)) return trimmed;
+  if (FTS5_OPERATOR_OR_PREFIX_SEARCH.test(trimmed)) return trimmed;
   return termsQuery(trimmed);
 }
 
-// Empty query text means a query with no terms at all — "what did we do
-// yesterday" is answered by the date filters alone. Query text that reduces to
-// nothing usable is a different case: it must match nothing rather than
-// everything.
 function matchFor(text) {
   const trimmed = String(text ?? "").trim();
-  if (!trimmed) return { match: null, unusable: false };
+  if (!trimmed) return MATCH_EVERY_ROW_THE_FILTERS_ALLOW;
+
   const match = ftsQuery(trimmed);
-  return { match, unusable: match === null };
+  return match ? { match, matchesNothing: false } : MATCH_NO_ROW;
 }
 
 // --- Search ---
@@ -99,7 +81,6 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
     source = "explicit",
     log = true,
   } = {}) {
-    // Refresh is on the read path so there is never a staleness question.
     refresh();
 
     const filters = {
@@ -129,14 +110,11 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
     const fellBackFrom =
       result.facts?.fellBackFrom ?? result.prompts?.fellBackFrom ?? result.overview?.fellBackFrom;
     if (log) {
-      logSearch(config, now, { query, mode, rows: result.rows, source, project, fellBackFrom });
+      logSearchOrCarryOn(config, now, { query, mode, rows: result.rows, source, project, fellBackFrom });
     }
     return result;
   }
 
-  // Facts and prompts are asked for separately and returned separately: nothing
-  // merges them into one ranked list, so raw prompt text cannot outrank a
-  // distilled fact.
   function factRows(query, filters) {
     return resultClass(query, filters, factPlan, [
       "f.topic",
@@ -159,63 +137,64 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
     ]);
   }
 
-  // An overview answers a broad question: which subjects match, and how often.
-  // No fact text, so orienting costs a fraction of a drill-down.
   function overviewRows(query, filters) {
-    const { match, unusable } = matchFor(query);
-    if (unusable) return { rows: [], total: 0, match: null };
+    const { match, matchesNothing } = matchFor(query);
+    if (matchesNothing) return NO_ROWS;
 
     const run = (effective) => {
       const plan = factPlan(effective, filters);
-      // Counted before the limit: a truncated overview that reports its own
-      // length as the total hides the truncation, which is the one thing an
-      // overview exists to make visible.
-      const total = db
-        .prepare(`select count(distinct f.topic) as c from ${plan.from} ${plan.where}`)
-        .get(...plan.params).c;
-      const sql = `select f.topic as topic, t.summary as summary, count(*) as hits
-                   from ${plan.from} left join topics t on t.id = f.topic
-                   ${plan.where} group by f.topic order by hits desc, f.topic limit ?`;
-      const rows = db.prepare(sql).all(...plan.params, filters.limit).map(plainRow);
-      return { rows, total, match: effective };
+      const topicsMatching = countRows(
+        `select count(distinct f.topic) as c from ${plan.from} ${plan.where}`,
+        plan.params
+      );
+      const rows = db
+        .prepare(
+          `select f.topic as topic, t.summary as summary, count(*) as hits
+           from ${plan.from} left join topics t on t.id = f.topic
+           ${plan.where} group by f.topic order by hits desc, f.topic limit ?`
+        )
+        .all(...plan.params, filters.limit)
+        .map(withoutNullPrototype);
+      return { rows, total: topicsMatching, match: effective };
     };
 
-    return withFallback(query, match, run);
+    return withTermsFallback(query, match, run);
   }
 
   function resultClass(query, filters, plan, columns) {
-    const { match, unusable } = matchFor(query);
-    if (unusable) return { rows: [], total: 0, match: null };
+    const { match, matchesNothing } = matchFor(query);
+    if (matchesNothing) return NO_ROWS;
 
     const run = (effective) => {
       const built = plan(effective, filters);
-      const total = db
-        .prepare(`select count(*) as c from ${built.from} ${built.where}`)
-        .get(...built.params).c;
+      const total = countRows(
+        `select count(*) as c from ${built.from} ${built.where}`,
+        built.params
+      );
       const rows = db
         .prepare(
           `select ${columns.join(", ")} from ${built.from} ${built.where}
            order by ${built.order} limit ?`
         )
         .all(...built.params, filters.limit)
-        .map(plainRow);
+        .map(withoutNullPrototype);
       return { rows, total, match: effective };
     };
 
-    return withFallback(query, match, run);
+    return withTermsFallback(query, match, run);
   }
 
-  // A caller-written FTS5 expression can be malformed. Rather than failing the
-  // search, fall back to treating the same text as plain terms — and say so in
-  // the result, so a search answered by different terms than were asked for is
-  // never silent.
-  function withFallback(query, match, run) {
+  function countRows(sql, params) {
+    return db.prepare(sql).get(...params).c;
+  }
+
+  function withTermsFallback(query, match, run) {
     try {
       return run(match);
     } catch (error) {
-      if (!/fts5/i.test(String(error?.message))) throw error;
+      if (!isFts5SyntaxError(error)) throw error;
       const terms = termsQuery(query);
-      if (!terms) return { rows: [], total: 0, match: null };
+      if (!terms) return NO_ROWS;
       return { ...run(terms), fellBackFrom: match };
     }
   }
@@ -223,17 +202,12 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
   function sql(statement, params = []) {
     assertReadOnly(statement);
     refresh();
-    const rows = db.prepare(statement).all(...params).map(plainRow);
-    logSearch(config, now, { query: statement, mode: "sql", rows: rows.length, source: "explicit" });
+    const rows = db.prepare(statement).all(...params).map(withoutNullPrototype);
+    logSearchOrCarryOn(config, now, { query: statement, mode: "sql", rows: rows.length, source: "explicit" });
     return rows;
   }
 
-  // Extraction quarantines a session that keeps failing rather than retrying it
-  // forever. Surfacing it is a read, so it belongs here rather than in a log the
-  // user has to find.
   function quarantined() {
-    // Refreshed like any other read, or a session's project and transcript come
-    // back null purely because the index has not caught up.
     refresh();
     const state = createStateStore(config).load();
     const sessions = new Map(
@@ -255,8 +229,6 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
       .sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
   }
 
-  // A liveness check, not a relevance score: it tells "search is never useful"
-  // apart from "search never ran".
   function smoke() {
     const queries = loadSmokeQueries(config);
     if (!queries) {
@@ -268,8 +240,6 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
     }
 
     const results = queries.map((entry) => {
-      // Logged like any other search, under its own source, so a liveness run is
-      // never mistaken for someone actually asking something.
       const result = search({ ...entry, source: "smoke" });
       const topics = new Set(
         [...(result.facts?.rows ?? []), ...(result.overview?.rows ?? [])].map((row) => row.topic)
@@ -318,6 +288,14 @@ function conditions() {
   };
 }
 
+const FACT_SESSION_ID_IS_A_PREFIX_OF = "s.session_id like f.session || '%'";
+const FACT_HAS_NO_SESSION_BUT_ITS_TOPIC_WAS_FED_BY = "f.session is null and s.topic = f.topic";
+const FACT_BELONGS_TO_PROJECT = `exists (
+  select 1 from sessions s
+  where s.project = ?
+    and ((f.session is not null and ${FACT_SESSION_ID_IS_A_PREFIX_OF})
+      or (${FACT_HAS_NO_SESSION_BUT_ITS_TOPIC_WAS_FED_BY})))`;
+
 function factPlan(match, { project, since, until, topic, section, session }) {
   const filter = conditions();
   let from = "facts f";
@@ -331,19 +309,7 @@ function factPlan(match, { project, since, until, topic, section, session }) {
   if (topic) filter.add("f.topic = ?", topic);
   if (section) filter.add("lower(f.section) = lower(?)", section);
   if (session) filter.add("f.session = ?", session);
-  if (project) {
-    // A fact carries a truncated session id, so its project is that of the
-    // session whose id it prefixes. A fact whose line carried no session id at
-    // all is kept when its topic was fed by that project: imperfect formatting
-    // must not make knowledge invisible, and it must not put a fact in every
-    // project either.
-    filter.add(
-      `exists (select 1 from sessions s where s.project = ?
-                 and ((f.session is not null and s.session_id like f.session || '%')
-                   or (f.session is null and s.topic = f.topic)))`,
-      project
-    );
-  }
+  if (project) filter.add(FACT_BELONGS_TO_PROJECT, project);
 
   return {
     from,
@@ -382,17 +348,17 @@ function assertReadOnly(statement) {
   }
 }
 
-// node:sqlite hands back null-prototype rows, which are awkward to spread,
-// compare, or serialise.
-function plainRow(row) {
+function isFts5SyntaxError(error) {
+  return /fts5/i.test(String(error?.message));
+}
+
+function withoutNullPrototype(row) {
   return row ? { ...row } : row;
 }
 
 // --- The search log ---
 
-// The instrumentation whose absence let a dead code path survive four months.
-// One line per search, and it must never be the reason a search fails.
-function logSearch(config, now, { query, mode, rows, source, project, fellBackFrom }) {
+function logSearchOrCarryOn(config, now, { query, mode, rows, source, project, fellBackFrom }) {
   try {
     mkdirSync(config.corpusDir, { recursive: true });
     appendFileSync(
@@ -407,9 +373,7 @@ function logSearch(config, now, { query, mode, rows, source, project, fellBackFr
         ...(fellBackFrom ? { fellBackFrom } : {}),
       })}\n`
     );
-  } catch {
-    // A search that worked is not failed by a log that did not.
-  }
+  } catch {}
 }
 
 // --- CLI ---
@@ -469,24 +433,23 @@ export function parseArgs(argv) {
 
   options.query = options.words.join(" ");
   for (const key of ["limit", "promptLimit"]) {
-    if (options[key] === undefined) continue;
-    const count = Number(options[key]);
-    // A limit that is not a number would reach SQLite as one, where a null limit
-    // silently means "no limit" and would return the whole corpus.
-    if (!Number.isInteger(count) || count < 1) {
-      throw new Error(`${key} needs a positive whole number, got ${options[key]}`);
-    }
-    options[key] = count;
+    if (options[key] !== undefined) options[key] = positiveWholeNumber(options[key], key);
   }
   return options;
+}
+
+function positiveWholeNumber(value, key) {
+  const count = Number(value);
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error(`${key} needs a positive whole number, got ${value}`);
+  }
+  return count;
 }
 
 function main(argv) {
   try {
     return run(argv);
   } catch (error) {
-    // A bad query is a normal outcome of the read path, so it reads as one line
-    // rather than as a stack trace.
     process.stderr.write(`toc-search: ${error.message}\n`);
     return 2;
   }
@@ -517,9 +480,7 @@ function run(argv) {
       const rows = search.sql(options.sqlText);
       return report(options.json ? jsonText(rows) : renderRows(rows));
     }
-    // A search needs terms or something to narrow by. Every filter counts:
-    // "the decisions in this topic" is a whole question with no terms in it.
-    if (!options.query && !FILTERS.some((filter) => options[filter])) {
+    if (!hasSomethingToSearchFor(options)) {
       process.stdout.write(`${USAGE}\n`);
       return 2;
     }
@@ -529,6 +490,10 @@ function run(argv) {
   } finally {
     search.close();
   }
+}
+
+function hasSomethingToSearchFor(options) {
+  return Boolean(options.query) || FILTERS.some((filter) => options[filter]);
 }
 
 function report(rendered) {

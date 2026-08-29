@@ -11,6 +11,10 @@ import {
 
 const NY = "America/New_York";
 
+const LATE_ON_26_AUGUST_IN_NEW_YORK = Date.parse("2026-08-27T03:30:00Z");
+const BEFORE_CLOCKS_JUMP_FORWARD = Date.parse("2026-03-08T06:30:00Z");
+const AFTER_CLOCKS_JUMP_FORWARD = Date.parse("2026-03-08T07:30:00Z");
+
 test("parses a fact carrying a session and a date", () => {
   const fact = parseFactLine("- Project uses Brazil build system [session:316972f2, 2026-05-12]");
 
@@ -123,19 +127,17 @@ test("keeps facts from a section other than Context or Decisions", () => {
 });
 
 test("buckets a timestamp by local date, not by UTC date", () => {
-  // 23:30 on 26 August in New York, already the 27th in UTC.
-  const parts = localDateParts(Date.parse("2026-08-27T03:30:00Z"), NY);
+  const parts = localDateParts(LATE_ON_26_AUGUST_IN_NEW_YORK, NY);
 
   assert.deepEqual(parts, { date: "2026-08-26", time: "23:30:00" });
 });
 
 test("buckets a timestamp on either side of a daylight-saving boundary", () => {
-  // Clocks jump forward at 02:00 local on 8 March 2026 in New York.
-  assert.deepEqual(localDateParts(Date.parse("2026-03-08T06:30:00Z"), NY), {
+  assert.deepEqual(localDateParts(BEFORE_CLOCKS_JUMP_FORWARD, NY), {
     date: "2026-03-08",
     time: "01:30:00",
   });
-  assert.deepEqual(localDateParts(Date.parse("2026-03-08T07:30:00Z"), NY), {
+  assert.deepEqual(localDateParts(AFTER_CLOCKS_JUMP_FORWARD, NY), {
     date: "2026-03-08",
     time: "03:30:00",
   });

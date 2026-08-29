@@ -5,6 +5,8 @@ import { appendFileSync, rmSync, statSync, utimesSync, writeFileSync } from "nod
 import { openIndex, SCHEMA_VERSION } from "../src/search-index.js";
 import { createStateStore } from "../src/state.js";
 import {
+  AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
+  LATE_ON_26_AUGUST_IN_NEW_YORK,
   appendPrompts,
   appendSessions,
   promptRecord,
@@ -15,8 +17,6 @@ import {
 
 const NY = "America/New_York";
 
-// node:sqlite returns null-prototype rows, which deep-equal rejects against a
-// plain object literal.
 const plain = (row) => (row ? { ...row } : row);
 
 function indexOf(config) {
@@ -152,9 +152,8 @@ test("ignores a merged topic tombstone", () => {
 test("indexes every prompt in the log with its local date and time", () => {
   withCorpus((config, index) => {
     appendPrompts(config, [
-      // 23:30 on 26 August in New York, already the 27th in UTC.
-      { display: "first prompt", timestamp: Date.parse("2026-08-27T03:30:00Z") },
-      { display: "/toc-search variants", timestamp: Date.parse("2026-08-27T15:00:00Z") },
+      { display: "first prompt", timestamp: LATE_ON_26_AUGUST_IN_NEW_YORK },
+      { display: "/toc-search variants", timestamp: AFTERNOON_ON_27_AUGUST_IN_NEW_YORK },
     ]);
 
     index.refresh();

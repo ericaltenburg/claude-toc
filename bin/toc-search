@@ -1,13 +1,4 @@
 #!/bin/sh
-# The read path's one entry point, so a single pre-authorised command covers
-# every search:
-#
-#   "permissions": { "allow": ["Bash($CLAUDE_TOC_HOME/bin/toc-search:*)"] }
-#
-# Set CLAUDE_TOC_HOME to this checkout. The flag suppresses the warning
-# node:sqlite prints on first use (see docs/adr/0004): search must not be noisy,
-# and neither must anything the sweep hook spawns. Set CLAUDE_TOC_NODE when the
-# `node` on PATH is older than 22.5 and so has no node:sqlite.
 set -e
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 exec "${CLAUDE_TOC_NODE:-node}" --disable-warning=ExperimentalWarning \
