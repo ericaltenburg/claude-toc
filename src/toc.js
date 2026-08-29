@@ -107,34 +107,6 @@ export function createTopicStore(config) {
     }
   }
 
-  function readTopicSection(topicId, section) {
-    const topicFile = topicPath(topicId);
-    if (!existsSync(topicFile)) return [];
-
-    const content = readFileSync(topicFile, "utf-8");
-    const header = `## ${section}`;
-    const idx = content.indexOf(header);
-    if (idx === -1) return [];
-
-    const afterHeader = content.indexOf("\n", idx) + 1;
-    const nextSection = content.indexOf("\n## ", afterHeader);
-    const sectionContent =
-      nextSection === -1
-        ? content.slice(afterHeader)
-        : content.slice(afterHeader, nextSection);
-
-    return sectionContent
-      .split("\n")
-      .filter((l) => l.startsWith("- "))
-      .reverse(); // most recent first
-  }
-
-  function readTopicFile(topicId) {
-    const topicFile = topicPath(topicId);
-    if (!existsSync(topicFile)) return null;
-    return readFileSync(topicFile, "utf-8");
-  }
-
   function countEntries(topicId) {
     const topicFile = topicPath(topicId);
     if (!existsSync(topicFile)) return 0;
@@ -232,8 +204,6 @@ export function createTopicStore(config) {
     loadToc,
     upsertTopic,
     appendToTopic,
-    readTopicSection,
-    readTopicFile,
     countEntries,
     findSimilarTopic,
     pickMergeWinner,
@@ -251,7 +221,7 @@ const normalize = (s) =>
       .filter((w) => w.length > 2)
   );
 
-export function jaccardSimilarity(setA, setB) {
+function jaccardSimilarity(setA, setB) {
   const a = new Set([...setA].map((s) => s.toLowerCase()));
   const b = new Set([...setB].map((s) => s.toLowerCase()));
   const intersection = [...a].filter((x) => b.has(x)).length;

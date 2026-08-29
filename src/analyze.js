@@ -138,14 +138,10 @@ function analyzeSession(session, { topics, state }) {
   console.log(`  ${textTurns.length} turns, ${text.length} chars`);
   console.log("  extracting...");
 
-  const toc = topics.loadToc();
-
   // Candidate topics and already-known facts come from the search index, which
   // is what bounds this prompt independently of corpus size (docs/adr/0002).
   // Until the index exists, extraction gets no known-facts block.
-  const existingFacts = [];
-
-  const result = extract(text, toc, existingFacts);
+  const result = extract(text, topics.loadToc());
 
   if (!result || result.skip) {
     console.log("  nothing meaningful to extract");
