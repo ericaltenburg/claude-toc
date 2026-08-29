@@ -15,6 +15,7 @@ test("derives every corpus path from the corpus directory", () => {
   assert.equal(config.tocPath, join("/tmp/corpus", "toc.json"));
   assert.equal(config.sessionIndexPath, join("/tmp/corpus", "sessions.jsonl"));
   assert.equal(config.statePath, join("/tmp/corpus", "state.json"));
+  assert.equal(config.indexPath, join("/tmp/corpus", "index.db"));
 });
 
 test("reads the corpus, transcripts and prompt log from the environment", () => {

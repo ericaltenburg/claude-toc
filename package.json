@@ -8,7 +8,10 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "test": "node --test"
+    "test": "node --disable-warning=ExperimentalWarning --test"
   },
-  "dependencies": {}
+  "dependencies": {},
+  "engines": {
+    "node": ">=22.5.0"
+  }
 }
