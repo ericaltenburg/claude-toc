@@ -1,0 +1,89 @@
+# Context
+
+Ubiquitous language for claude-toc. Glossary only — no implementation detail, no decisions.
+
+## Session
+
+One Claude Code conversation. Claude Code owns it and writes a transcript file for
+it under `~/.claude/projects/`. A session is a source, never something claude-toc
+writes.
+
+Identified by its session id (a uuid). Transcripts rotate away over time, so a
+session id may outlive its transcript.
+
+## Fact
+
+One distilled statement extracted from a session, written as a single markdown
+list item with the session and date it came from:
+
+```
+- Project uses Brazil build system [session:316972f2, 2026-05-12]
+```
+
+A fact is the unit of retrieval. Search ranks facts, not topics.
+
+## Topic
+
+One subject, stored as one markdown file. A topic holds many facts and carries a
+summary and keywords. Topic is a **label and provenance on a fact**, not a thing
+that gets retrieved on its own.
+
+Topic size is not bounded: topics range from 4 to 347 facts.
+
+## Section
+
+A division within a topic file separating the two kinds of fact:
+
+- **Context** — what is true about the subject.
+- **Decisions** — what was chosen about the subject. A decision is an outcome, not
+  an intention: it is settled and dated at the moment it was reached.
+
+Preserving this distinction is the differentiator over undifferentiated
+observation stores. A search result carries its fact's section.
+
+Neither section records **world state** — whether a chosen thing was subsequently
+built, deployed, or reverted. Facts record what was concluded in a session; the
+systems of record (git, CloudFormation, tickets) hold what was executed. Later
+sessions about the same subject supply newer facts, and their dates are how
+currency is judged.
+
+## Corpus
+
+Every topic file, plus the table of contents describing them. Lives outside this
+repo at `~/.claude/claude-toc/`. The corpus is the source of truth and is
+irreplaceable: transcripts rotate away, so a lost fact cannot be re-extracted.
+
+## Prompt
+
+One message the user typed, as recorded by Claude Code in
+`~/.claude/history.jsonl`. Prompts are raw, not distilled, and carry a timestamp
+and project path. Prompts supply the **timeline**; facts supply the **insight**.
+
+A prompt is never a fact. Search keeps them as separate result classes so raw
+text cannot outrank a distilled fact.
+
+## Search
+
+The read path. Claude issues a query and receives ranked facts, ranked prompts,
+or both. Claude may invoke search on its own judgement; `/toc-search` is the
+manual entry point for the same thing.
+
+Search is always pull. Nothing is ever pushed into a prompt.
+
+A retrieved fact is **dated evidence, not current truth**. The corpus has no way
+to learn that a fact went stale, because nothing writes "this changed" — a fact
+about a pinned dependency version stays confident and wrong after the bump. So a
+fact is always attributed to its date when used ("a session on 2026-08-27
+recorded X"), never asserted as present tense, and anything load-bearing is
+checked against the systems of record before it is acted on.
+
+## Extraction
+
+Turning a slice of one session's transcript into facts, and appending them to a
+topic. Extraction is expensive, asynchronous, and best-effort. It costs money and
+runs behind the live conversation.
+
+## Sweep
+
+Deciding which sessions are ready for extraction and starting it. A sweep reads
+session state and never speaks to the user.
