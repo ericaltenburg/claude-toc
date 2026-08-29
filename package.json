@@ -8,7 +8,10 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "test": "node --disable-warning=ExperimentalWarning --test"
+    "pretest": "node -e \"const [j,n]=process.versions.node.split('.').map(Number); if (j<22 || (j===22 && n<5)) { console.error('claude-toc needs Node >= 22.5 for node:sqlite (see docs/adr/0004); this is '+process.versions.node); process.exit(1) }\"",
+    "test": "node --disable-warning=ExperimentalWarning --test",
+    "search": "./bin/toc-search",
+    "smoke": "./bin/toc-search --smoke"
   },
   "dependencies": {},
   "engines": {

@@ -1,0 +1,5 @@
+{
+  "permissions": {
+    "allow": ["Bash($CLAUDE_TOC_HOME/bin/toc-search:*)"]
+  }
+}

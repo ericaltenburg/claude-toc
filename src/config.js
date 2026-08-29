@@ -22,6 +22,8 @@ export function createConfig(overrides = {}, env = process.env) {
     sessionIndexPath: join(corpusDir, "sessions.jsonl"),
     statePath: join(corpusDir, "state.json"),
     indexPath: join(corpusDir, "index.db"),
+    searchLogPath: join(corpusDir, "search.log"),
+    smokeQueriesPath: join(corpusDir, "smoke-queries.json"),
     legacyProcessedPath: join(corpusDir, "processed.json"),
   });
 }

@@ -17,9 +17,6 @@ import { parsePromptRecord, parseSessionRecord, parseTopic } from "./parse.js";
 import { createStateStore } from "./state.js";
 import { createTopicStore } from "./toc.js";
 
-// Bump this whenever the schema below changes. A mismatch throws the whole index
-// away and rebuilds it, which is always safe: every row here is derived from
-// markdown, and markdown is the source of truth.
 export const SCHEMA_VERSION = 1;
 
 const SCHEMA = `
@@ -61,9 +58,6 @@ create table sessions (
   started_at text,
   extracted_at text,
   topic text,
-  -- How far into a transcript extraction has read. Written by the sweep, which
-  -- does not exist yet; the column is here because the schema is versioned and
-  -- adding it later would cost a rebuild of everything.
   extraction_offset integer
 );
 
@@ -107,8 +101,6 @@ export function openIndex(config, { timeZone } = {}) {
     db = connect(config);
     rebuilt = ensureSchema(db);
   } catch {
-    // An unreadable or corrupt index is not a problem worth diagnosing: throw
-    // the file away and build a new one from the markdown.
     db?.close();
     rmSync(config.indexPath, { force: true });
     db = connect(config);
@@ -166,8 +158,6 @@ function storedVersion(db) {
 }
 
 function dropEverything(db) {
-  // Dropping a parent table before its children would otherwise have to fight
-  // foreign key enforcement. Nothing here is worth preserving, so switch it off.
   db.exec("pragma foreign_keys = off");
   const objects = db
     .prepare("select type, name from sqlite_master where name not like 'sqlite_%'")
@@ -218,21 +208,17 @@ function refreshTopics(db, config) {
 
     const path = join(config.topicsDir, file);
     const stat = statSync(path);
-    const previous = known.get(id);
-    const unchanged =
-      previous && previous.mtime_ms === Math.floor(stat.mtimeMs) && previous.size === stat.size;
+    const factsUnchanged = matchesIndexedFile(known.get(id), stat);
 
-    // The summary and keywords live in the table of contents rather than in the
-    // topic file, so they are refreshed even when the file itself is untouched.
-    const entry = toc[id] ?? {};
+    const entryFromToc = toc[id] ?? {};
     upsertTopic.run(
       id,
-      entry.summary ?? null,
-      keywordText(entry),
+      entryFromToc.summary ?? null,
+      keywordText(entryFromToc),
       Math.floor(stat.mtimeMs),
       stat.size
     );
-    if (unchanged) continue;
+    if (factsUnchanged) continue;
 
     deleteFacts.run(id);
     for (const fact of parseTopic(readFileSync(path, "utf-8"))) {
@@ -251,12 +237,16 @@ function refreshTopics(db, config) {
   return { topicsParsed: parsed, factsIndexed };
 }
 
+function matchesIndexedFile(previous, stat) {
+  return Boolean(
+    previous && previous.mtime_ms === Math.floor(stat.mtimeMs) && previous.size === stat.size
+  );
+}
+
 function keywordText(entry) {
   return Array.isArray(entry.keywords) ? entry.keywords.join(" ") : null;
 }
 
-// The table of contents is the topic store's file, so it is read through the
-// topic store. A corrupt one costs summaries and keywords, not the refresh.
 function loadToc(config) {
   try {
     return createTopicStore(config).loadToc().topics ?? {};
@@ -326,9 +316,6 @@ function refreshSessions(db, config) {
   return { sessionsIndexed: count };
 }
 
-// Which sessions have been extracted, and into which topic, lives in the state
-// file rather than the session log, so it is overlaid on every refresh. The file
-// holds one small record per session, so re-reading it whole costs nothing.
 function applyExtractionState(db, config) {
   const processed = createStateStore(config).load().processed;
   const upsert = db.prepare(
@@ -345,10 +332,9 @@ function applyExtractionState(db, config) {
 
 // --- Incremental reading ---
 
-// Reads the bytes of an append-only log that arrived since the last refresh,
-// stopping at the last complete line so a half-written record is left for next
-// time. A log shorter than the recorded offset has been truncated or rotated, so
-// the caller's reset runs and reading starts again from the beginning.
+const NEWLINE = 0x0a;
+const START_OF_LOG = 0;
+
 function readAppendedLines(db, { path, offsetKey, onReset, onLine }) {
   if (!existsSync(path)) return;
 
@@ -356,12 +342,10 @@ function readAppendedLines(db, { path, offsetKey, onReset, onLine }) {
   const fd = openSync(path, "r");
   try {
     const { size } = fstatSync(fd);
-    if (size < offset) {
+    if (logWasTruncated(size, offset)) {
       onReset();
-      offset = 0;
-      // Recorded straight away: an emptied log leaves nothing to read below, and
-      // a stale offset would make the next refresh skip its first records.
-      storeOffset(db, offsetKey, 0);
+      offset = START_OF_LOG;
+      storeOffset(db, offsetKey, offset);
     }
     if (size === offset) return;
 
@@ -369,17 +353,20 @@ function readAppendedLines(db, { path, offsetKey, onReset, onLine }) {
     const read = readSync(fd, buffer, 0, buffer.length, offset);
     if (read <= 0) return;
 
-    const lastNewline = buffer.lastIndexOf(0x0a, read - 1);
-    if (lastNewline === -1) return;
+    const endOfLastCompleteLine = buffer.lastIndexOf(NEWLINE, read - 1);
+    if (endOfLastCompleteLine === -1) return;
 
-    const text = buffer.toString("utf-8", 0, lastNewline);
-    for (const line of text.split("\n")) {
+    for (const line of buffer.toString("utf-8", 0, endOfLastCompleteLine).split("\n")) {
       if (line.trim()) onLine(line);
     }
-    storeOffset(db, offsetKey, offset + lastNewline + 1);
+    storeOffset(db, offsetKey, offset + endOfLastCompleteLine + 1);
   } finally {
     closeSync(fd);
   }
+}
+
+function logWasTruncated(size, offset) {
+  return size < offset;
 }
 
 function storedOffset(db, key) {

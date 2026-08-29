@@ -1,8 +1,3 @@
-// Parsers for the two things the index derives itself from: topic markdown and
-// the prompt log. Markdown is the source of truth, so these parsers are
-// forgiving: a line that matches no known shape is kept with a null date rather
-// than dropped, and a malformed prompt record is skipped rather than fatal.
-
 const FACT_WITH_SESSION = /^(.*?)\s*\[session:([^\s,\]]+),\s*(\d{4}-\d{2}-\d{2})\]$/;
 const FACT_WITH_DATE = /^(.*?)\s*\[(\d{4}-\d{2}-\d{2})\]$/;
 
@@ -68,9 +63,6 @@ function formatter(timeZone) {
   return existing;
 }
 
-// SQLite has no local timezone, so "yesterday" computed in SQL would silently
-// use UTC and misfile every evening session. The local date is precomputed here
-// and stored, once, at index time.
 export function localDateParts(ms, timeZone) {
   const parts = {};
   for (const { type, value } of formatter(timeZone).formatToParts(ms)) {

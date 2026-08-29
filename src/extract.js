@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-// claude-toc: Extraction — turn a session's transcript into facts on a topic.
-// Usage: node src/extract.js [session_id]  — extract one session
-//        node src/extract.js --all         — extract every unextracted session
-//        node src/extract.js --dedup       — merge duplicate topics
-
 import { readFileSync, existsSync } from "fs";
 import { execSync } from "child_process";
 
@@ -140,13 +135,7 @@ function extractSession(session, { topics, state }) {
     return;
   }
 
-  // Check for similar existing topic before creating new one
-  let topicId = result.topic.id;
-  const match = topics.findSimilarTopic(topicId, result.topic.keywords);
-  if (match) {
-    console.log(`  → matched existing topic: ${match.id} (score: ${match.score.toFixed(2)})`);
-    topicId = match.id;
-  }
+  const topicId = existingTopicSimilarTo(result.topic, topics) ?? result.topic.id;
 
   topics.upsertTopic(topicId, {
     keywords: result.topic.keywords,
@@ -165,6 +154,14 @@ function extractSession(session, { topics, state }) {
   console.log(`  → topic: ${topicId}`);
   console.log(`  → ${result.context?.length || 0} facts, ${result.decisions?.length || 0} decisions`);
   console.log(`  → ${result.topic.summary}`);
+}
+
+function existingTopicSimilarTo(topic, topics) {
+  const match = topics.findSimilarTopic(topic.id, topic.keywords);
+  if (!match) return null;
+
+  console.log(`  → matched existing topic: ${match.id} (score: ${match.score.toFixed(2)})`);
+  return match.id;
 }
 
 function reportDedup({ topics }) {

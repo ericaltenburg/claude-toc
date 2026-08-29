@@ -3,7 +3,12 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "
 const STATE_VERSION = 1;
 const EXTRACTION_LEASE_MS = 300_000;
 
-const EMPTY = () => ({ version: STATE_VERSION, processed: {}, extraction: null });
+const EMPTY = () => ({
+  version: STATE_VERSION,
+  processed: {},
+  quarantined: {},
+  extraction: null,
+});
 
 export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {}) {
   let owned = null;
@@ -15,6 +20,7 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
         return {
           version: state.version ?? STATE_VERSION,
           processed: state.processed ?? {},
+          quarantined: state.quarantined ?? {},
           extraction: state.extraction ?? null,
         };
       } catch {
