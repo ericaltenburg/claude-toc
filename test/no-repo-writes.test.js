@@ -1,48 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { createConfig } from "../src/config.js";
 import { createTopicStore } from "../src/toc.js";
 import { createStateStore } from "../src/state.js";
-
-const REPO_ROOT = join(import.meta.dirname, "..");
-const HOOKS = [
-  join(REPO_ROOT, "hooks", "toc-logger.mjs"),
-  join(REPO_ROOT, "hooks", "toc-auto-analyze.mjs"),
-];
-
-function tempCorpus() {
-  const root = mkdtempSync(join(tmpdir(), "claude-toc-repo-"));
-  const corpusDir = join(root, "corpus");
-  const transcriptsDir = join(root, "projects");
-  const promptLog = join(root, "history.jsonl");
-  mkdirSync(corpusDir, { recursive: true });
-  mkdirSync(transcriptsDir, { recursive: true });
-  writeFileSync(promptLog, "");
-  return { root, config: createConfig({ corpusDir, transcriptsDir, promptLog }, {}) };
-}
-
-function hookEnv(config) {
-  return {
-    ...process.env,
-    CLAUDE_TOC_CORPUS_DIR: config.corpusDir,
-    CLAUDE_TOC_TRANSCRIPTS_DIR: config.transcriptsDir,
-    CLAUDE_TOC_PROMPT_LOG: config.promptLog,
-  };
-}
-
-function runHook(hook, payload, config) {
-  return execFileSync("node", [hook], {
-    input: typeof payload === "string" ? payload : JSON.stringify(payload),
-    encoding: "utf-8",
-    env: hookEnv(config),
-    timeout: 20_000,
-  });
-}
+import {
+  tempCorpus,
+  runNode,
+  sessionPayload,
+  REPO_ROOT,
+  LOGGER_HOOK,
+  EXTRACT_HOOK,
+  EXTRACTOR,
+} from "./support/corpus.js";
 
 function repoStatus() {
   return execFileSync("git", ["status", "--porcelain", "--ignored"], {
@@ -53,7 +25,8 @@ function repoStatus() {
 
 test("every write lands in the configured corpus and none in the repository", () => {
   const before = repoStatus();
-  const { config } = tempCorpus();
+  const config = tempCorpus();
+  const session = "316972f2-1111-2222-3333-444455556666";
 
   const topics = createTopicStore(config);
   topics.upsertTopic("alcs_broadcast_variants", {
@@ -64,28 +37,22 @@ test("every write lands in the configured corpus and none in the repository", ()
     "alcs_broadcast_variants",
     "Context",
     "Variants are keyed by show id",
-    "316972f2-1111-2222-3333-444455556666"
+    session
   );
   topics.appendToTopic(
     "alcs_broadcast_variants",
     "Decisions",
     "Will store variants in DynamoDB",
-    "316972f2-1111-2222-3333-444455556666"
+    session
   );
+  createStateStore(config).markProcessed(session, null);
 
-  createStateStore(config).markProcessed("316972f2-1111-2222-3333-444455556666", null);
-
-  for (const hook of HOOKS) {
-    runHook(
-      hook,
-      {
-        session_id: "aaaaaaaa-1111-2222-3333-444455556666",
-        transcript_path: join(config.transcriptsDir, "missing.jsonl"),
-        cwd: "/some/project",
-        prompt: "what did we decide about broadcast variants?",
-      },
-      config
-    );
+  // both hooks, and the extractor's own entry point, run as real subprocesses
+  runNode(LOGGER_HOOK, { input: sessionPayload(config), config });
+  runNode(EXTRACT_HOOK, { input: sessionPayload(config), config });
+  for (const args of [[], ["--dedup"], ["nosuchsession"]]) {
+    const result = runNode(EXTRACTOR, { args, config });
+    assert.equal(result.stderr, "", `node src/extract.js ${args.join(" ")}`);
   }
 
   // the work actually happened, in the temporary corpus
@@ -99,11 +66,24 @@ test("every write lands in the configured corpus and none in the repository", ()
   assert.equal(existsSync(join(REPO_ROOT, "memory")), false);
 });
 
+test("the extractor lists sessions without writing anything", () => {
+  const config = tempCorpus();
+  const before = repoStatus();
+
+  runNode(LOGGER_HOOK, { input: sessionPayload(config), config });
+  const listing = runNode(EXTRACTOR, { args: [], config });
+
+  assert.equal(listing.status, 0);
+  assert.match(listing.stdout, /1 total, 1 unextracted/);
+  assert.match(listing.stdout, /aaaaaaaa.*pending/);
+  assert.equal(repoStatus(), before);
+});
+
 test("only the config module knows where the corpus is", () => {
   // Any module that names a corpus artifact, reads the home directory, or joins
   // its own file location into a data path has a second source of truth.
   const forbidden =
-    /homedir\(|import\.meta\.dirname|__dirname|toc\.json|sessions\.jsonl|state\.json|processed\.json|history\.jsonl|"topics"|"memory"/;
+    /homedir\(|import\.meta\.dirname|__dirname|toc\.json|sessions\.jsonl|state\.json|processed\.json|history\.jsonl|topics\/|"topics"|"memory"/;
 
   const offenders = [];
   for (const relative of trackedSources()) {
@@ -120,7 +100,9 @@ test("the removed push-injection code is gone", () => {
     join(REPO_ROOT, "hooks", "toc-inject.cjs"),
     join(REPO_ROOT, "hooks", "toc-logger.cjs"),
     join(REPO_ROOT, "hooks", "toc-auto-analyze.cjs"),
+    join(REPO_ROOT, "hooks", "toc-auto-analyze.mjs"),
     join(REPO_ROOT, "src", "read-session.js"),
+    join(REPO_ROOT, "src", "analyze.js"),
   ]) {
     assert.equal(existsSync(gone), false, `${gone} should be deleted`);
   }

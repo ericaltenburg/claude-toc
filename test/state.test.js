@@ -1,24 +1,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  mkdtempSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-  existsSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 
-import { createConfig } from "../src/config.js";
 import { createStateStore } from "../src/state.js";
+import { tempCorpus } from "./support/corpus.js";
 
 function freshConfig() {
-  const corpusDir = mkdtempSync(join(tmpdir(), "claude-toc-state-"));
-  mkdirSync(join(corpusDir, "topics"), { recursive: true });
-  return createConfig({ corpusDir }, {});
+  const config = tempCorpus();
+  mkdirSync(config.topicsDir, { recursive: true });
+  return config;
 }
+
+test("exposes what extraction recorded without leaking the file's shape", () => {
+  const config = freshConfig();
+  const state = createStateStore(config);
+
+  assert.equal(state.processedRecord("never-seen"), null);
+  state.markProcessed("seen", { topic: { id: "resume_project" } });
+  assert.equal(state.processedRecord("seen").topic, "resume_project");
+});
 
 test("records processed sessions in the one state file", () => {
   const config = freshConfig();
@@ -95,7 +95,7 @@ test("releasing a lock another process took does not clobber it", () => {
 
 test("adopts an existing processed.json once and never writes it again", () => {
   const config = freshConfig();
-  const legacy = join(config.corpusDir, "processed.json");
+  const legacy = config.legacyProcessedPath;
   writeFileSync(
     legacy,
     JSON.stringify({ old: { ts: "2026-05-12T00:00:00.000Z", topic: "resume_project" } })

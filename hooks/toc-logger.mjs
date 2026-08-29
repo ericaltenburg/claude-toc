@@ -27,7 +27,7 @@ process.stdin.on("end", () => {
 });
 
 function indexSession(data) {
-  if (process.env.TOC_ANALYZING === "1") return; // fired inside the extractor
+  if (process.env.TOC_EXTRACTING === "1") return; // fired inside the extractor
   if (!data.session_id || !data.transcript_path) return;
 
   const config = createConfig();

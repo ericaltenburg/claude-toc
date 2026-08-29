@@ -33,7 +33,7 @@ export function createTopicStore(config) {
       : keywords;
 
     toc.topics[id] = {
-      file: `topics/${id}.md`,
+      file: `${config.topicsDirName}/${id}.md`,
       keywords: mergedKeywords,
       summary: summary || existing?.summary || "",
       last_active: new Date().toISOString(),
@@ -64,37 +64,17 @@ export function createTopicStore(config) {
     const ts = new Date().toISOString().slice(0, 10);
     const sid = sessionId?.slice(0, 8) || "unknown";
     const line = `- ${entry} [session:${sid}, ${ts}]\n`;
-
-    // find the section header and append after it
     const header = `## ${section}`;
-    const idx = content.indexOf(header);
-    if (idx === -1) {
+
+    const block = sectionBlock(content, section);
+    if (!block) {
       // section doesn't exist, add it
       writeFileSync(topicFile, content + `\n${header}\n\n${line}`);
     } else {
-      // find end of section header line, insert after
-      const afterHeader = content.indexOf("\n", idx) + 1;
-      // find next section or end of file
-      const nextSection = content.indexOf("\n## ", afterHeader);
-      const insertAt = nextSection === -1 ? content.length : nextSection;
-
-      // check for duplicate (substring)
-      const sectionContent = content.slice(afterHeader, insertAt);
-      if (sectionContent.includes(entry.slice(0, 60))) return; // skip dupe
-
-      // check for duplicate (normalized word overlap)
-      const newWords = normalize(entry);
-      for (const line of sectionContent.split("\n").filter((l) => l.startsWith("- "))) {
-        const existingFact = line
-          .replace(/^- /, "")
-          .replace(/ \[session:.*\]$/, "")
-          .replace(/ \[\d{4}-\d{2}-\d{2}\]$/, "");
-        if (jaccardSimilarity(newWords, normalize(existingFact)) >= 0.8) return; // skip near-dupe
-      }
-
+      if (isDuplicateFact(block.text, entry)) return;
       writeFileSync(
         topicFile,
-        content.slice(0, insertAt) + line + content.slice(insertAt)
+        content.slice(0, block.end) + line + content.slice(block.end)
       );
     }
 
@@ -164,17 +144,10 @@ export function createTopicStore(config) {
     // Read loser content and transfer facts
     const loserContent = readFileSync(loserPath, "utf-8");
     for (const section of ["Context", "Decisions"]) {
-      const header = `## ${section}`;
-      const idx = loserContent.indexOf(header);
-      if (idx === -1) continue;
-      const afterHeader = loserContent.indexOf("\n", idx) + 1;
-      const nextSection = loserContent.indexOf("\n## ", afterHeader);
-      const block =
-        nextSection === -1
-          ? loserContent.slice(afterHeader)
-          : loserContent.slice(afterHeader, nextSection);
-      for (const line of block.split("\n").filter((l) => l.startsWith("- "))) {
-        appendToTopic(winnerId, section, line.replace(/^- /, ""));
+      const block = sectionBlock(loserContent, section);
+      if (!block) continue;
+      for (const fact of factLines(block.text)) {
+        appendToTopic(winnerId, section, fact);
       }
     }
 
@@ -200,18 +173,74 @@ export function createTopicStore(config) {
     saveToc(toc);
   }
 
+  /** Merges every pair of topics similar enough to be the same subject. */
+  function dedupTopics() {
+    const ids = Object.keys(loadToc().topics);
+    const merges = [];
+    const merged = new Set();
+
+    for (let i = 0; i < ids.length; i++) {
+      if (merged.has(ids[i])) continue;
+      for (let j = i + 1; j < ids.length; j++) {
+        if (merged.has(ids[j])) continue;
+        const keywords = loadToc().topics[ids[j]].keywords;
+        const match = findSimilarTopic(ids[j], keywords);
+        if (!match || match.id !== ids[i]) continue;
+        const { winnerId, loserId } = pickMergeWinner(ids[i], ids[j]);
+        mergeTopics(winnerId, loserId);
+        merged.add(loserId);
+        merges.push({ winnerId, loserId, score: match.score });
+      }
+    }
+
+    return { merges, remaining: ids.length - merged.size };
+  }
+
   return {
     loadToc,
     upsertTopic,
     appendToTopic,
     countEntries,
     findSimilarTopic,
-    pickMergeWinner,
-    mergeTopics,
+    dedupTopics,
   };
 }
 
 // --- pure helpers ---
+
+/**
+ * Locates one `## Section` in a topic file.
+ * @returns {{ text: string, end: number } | null} the section's body and the
+ *   offset the next fact should be inserted at, or null if it has no such section
+ */
+function sectionBlock(content, section) {
+  const idx = content.indexOf(`## ${section}`);
+  if (idx === -1) return null;
+  const start = content.indexOf("\n", idx) + 1;
+  const nextSection = content.indexOf("\n## ", start);
+  const end = nextSection === -1 ? content.length : nextSection;
+  return { text: content.slice(start, end), end };
+}
+
+function factLines(sectionText) {
+  return sectionText
+    .split("\n")
+    .filter((l) => l.startsWith("- "))
+    .map((l) => l.replace(/^- /, ""));
+}
+
+/** True if this section already holds the same fact, verbatim or reworded. */
+function isDuplicateFact(sectionText, entry) {
+  if (sectionText.includes(entry.slice(0, 60))) return true;
+  const newWords = normalize(entry);
+  for (const fact of factLines(sectionText)) {
+    const bare = fact
+      .replace(/ \[session:.*\]$/, "")
+      .replace(/ \[\d{4}-\d{2}-\d{2}\]$/, "");
+    if (jaccardSimilarity(newWords, normalize(bare)) >= 0.8) return true;
+  }
+  return false;
+}
 
 const normalize = (s) =>
   new Set(

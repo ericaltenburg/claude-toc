@@ -30,6 +30,8 @@ export function createConfig(overrides = {}, env = process.env) {
     promptLog,
     // derived from the corpus root
     topicsDir: join(corpusDir, "topics"),
+    // the same folder as recorded inside toc.json, which stores corpus-relative paths
+    topicsDirName: "topics",
     tocPath: join(corpusDir, "toc.json"),
     sessionIndexPath: join(corpusDir, "sessions.jsonl"),
     statePath: join(corpusDir, "state.json"),

@@ -11,7 +11,7 @@ import { fileURLToPath } from "url";
 import { createConfig } from "../src/config.js";
 import { createStateStore } from "../src/state.js";
 
-const ANALYZER = fileURLToPath(new URL("../src/analyze.js", import.meta.url));
+const EXTRACTOR = fileURLToPath(new URL("../src/extract.js", import.meta.url));
 const STDIN_TIMEOUT_MS = 5000;
 
 let input = "";
@@ -30,19 +30,19 @@ process.stdin.on("end", () => {
 });
 
 function triggerExtraction(data) {
-  if (process.env.TOC_ANALYZING === "1") return; // fired inside the extractor
+  if (process.env.TOC_EXTRACTING === "1") return; // fired inside the extractor
   if (!data.session_id) return;
 
   const config = createConfig();
   const state = createStateStore(config);
   if (!state.acquireExtraction(data.session_id)) return; // one extraction at a time
 
-  const child = spawn("node", [ANALYZER, data.session_id.slice(0, 8)], {
+  const child = spawn("node", [EXTRACTOR, data.session_id.slice(0, 8)], {
     detached: true,
     stdio: "ignore",
     env: {
       ...process.env,
-      TOC_ANALYZING: "1",
+      TOC_EXTRACTING: "1",
       TOC_LOCK_SESSION: data.session_id,
     },
   });

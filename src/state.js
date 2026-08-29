@@ -1,4 +1,4 @@
-// claude-toc: sweep state — one file, not three.
+// claude-toc: sweep and extraction state — one file, not three.
 //
 // Replaces the old processed.json plus .analyzing lock plus per-session .turns-*
 // counters. Everything the sweep needs to know lives in state.json inside the
@@ -59,6 +59,11 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
     return Boolean(load().processed[sessionId]);
   }
 
+  /** What extraction recorded for a session, or null if it never ran on it. */
+  function processedRecord(sessionId) {
+    return load().processed[sessionId] ?? null;
+  }
+
   function markProcessed(sessionId, result) {
     const state = load();
     state.processed[sessionId] = {
@@ -79,6 +84,12 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
 
     state.extraction = { sessionId, startedAt: new Date().toISOString() };
     save(state);
+
+    // The write above is a read-modify-write, so two sweeps can both get this
+    // far. Re-read: last writer wins, and only the caller that still sees its
+    // own id proceeds, so exactly one extraction starts.
+    if (load().extraction?.sessionId !== sessionId) return false;
+
     owned = sessionId;
     return true;
   }
@@ -93,5 +104,12 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
     if (owned === sessionId) owned = null;
   }
 
-  return { load, isProcessed, markProcessed, acquireExtraction, releaseExtraction };
+  return {
+    load,
+    isProcessed,
+    processedRecord,
+    markProcessed,
+    acquireExtraction,
+    releaseExtraction,
+  };
 }
