@@ -1,0 +1,27 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is what this is developed against; 22 catches runtime drift early.
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the suite shells out to git status / ls-files / grep to prove no code
+          # path writes inside the repository, so it needs real history
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # No install step and no build step: the project has no dependencies and
+      # nothing to compile. If a dependency is ever added, npm ci belongs here.
+      - run: npm test
