@@ -21,6 +21,7 @@ export function createConfig(overrides = {}, env = process.env) {
     tocPath: join(corpusDir, "toc.json"),
     sessionIndexPath: join(corpusDir, "sessions.jsonl"),
     statePath: join(corpusDir, "state.json"),
+    indexPath: join(corpusDir, "index.db"),
     legacyProcessedPath: join(corpusDir, "processed.json"),
   });
 }

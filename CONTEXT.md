@@ -53,6 +53,20 @@ Every topic file, plus the table of contents describing them. Lives outside this
 repo at `~/.claude/claude-toc/`. The corpus is the source of truth and is
 irreplaceable: transcripts rotate away, so a lost fact cannot be re-extracted.
 
+## Index
+
+The queryable derivation of the corpus and the prompt log: topics, facts,
+prompts, and sessions in SQLite, with full-text tables over facts and prompts.
+
+The index is **derived and disposable**. Markdown stays the source of truth, and
+deleting the index costs nothing but the time to rebuild it. Nothing writes a
+fact to the index that it did not read from markdown.
+
+**Refresh** is the one operation that brings it up to date, called by whoever is
+about to need fresh data rather than on a schedule. It is incremental: a topic
+file is reparsed only when its modification time or size changed, and the prompt
+log is read only past the byte offset already consumed.
+
 ## Prompt
 
 One message the user typed, as recorded by Claude Code in

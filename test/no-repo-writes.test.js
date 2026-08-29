@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { createTopicStore } from "../src/toc.js";
 import { createStateStore } from "../src/state.js";
+import { openIndex } from "../src/search-index.js";
 import {
   tempCorpus,
   runNode,
@@ -47,6 +48,10 @@ test("every write lands in the configured corpus and none in the repository", ()
   );
   createStateStore(config).markProcessed(session, null);
 
+  const index = openIndex(config);
+  index.refresh();
+  index.close();
+
   runNode(LOGGER_HOOK, { input: sessionPayload(config), config });
   runNode(EXTRACT_HOOK, { input: sessionPayload(config), config });
   for (const args of [[], ["--dedup"], ["nosuchsession"]]) {
@@ -57,6 +62,7 @@ test("every write lands in the configured corpus and none in the repository", ()
   assert.ok(existsSync(join(config.topicsDir, "alcs_broadcast_variants.md")));
   assert.ok(existsSync(config.tocPath));
   assert.ok(existsSync(config.statePath));
+  assert.ok(existsSync(config.indexPath));
   assert.ok(readFileSync(config.sessionIndexPath, "utf-8").includes("aaaaaaaa"));
 
   assert.equal(repoStatus(), before);
