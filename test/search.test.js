@@ -144,6 +144,10 @@ test("an overview reports how many topics matched, not how many it showed", () =
 
     assert.equal(result.overview.rows.length, 20);
     assert.equal(result.overview.total, 25);
+    // And an overview honours a smaller limit while still reporting the total.
+    const capped = search.search({ query: "variants", mode: "overview", limit: 5 });
+    assert.equal(capped.overview.rows.length, 5);
+    assert.equal(capped.overview.total, 25);
   });
 });
 

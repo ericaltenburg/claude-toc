@@ -31,7 +31,7 @@ rebuild anything.
 | `--date`, `--since`, `--until` | local dates, `YYYY-MM-DD` |
 | `--project PATH` | scope to one project directory |
 | `--topic ID`, `--section Decisions`, `--session ID` | narrow to one |
-| `--limit N`, `--prompt-limit N` | override the default result sizes |
+| `--limit N`, `--prompt-limit N` | override the default sizes (`--limit` also caps an overview) |
 | `--source automatic` | mark the search as your own judgement in the log |
 | `--sql "select ..."` | anything the above cannot express |
 | `--quarantined` | sessions extraction gave up on |

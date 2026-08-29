@@ -20,7 +20,6 @@ import { createStateStore } from "./state.js";
 // extra turn a drill-down would cost.
 export const FACT_LIMIT = 20;
 export const PROMPT_LIMIT = 10;
-export const OVERVIEW_LIMIT = 20;
 
 // --- Query terms ---
 
@@ -120,7 +119,7 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
       result.prompts = promptRows(query, { ...filters, limit: promptLimit });
     }
     if (mode === "overview") {
-      result.overview = overviewRows(query, { ...filters, limit: OVERVIEW_LIMIT });
+      result.overview = overviewRows(query, { ...filters, limit });
     }
     result.rows =
       (result.facts?.rows.length ?? 0) +
