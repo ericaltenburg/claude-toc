@@ -127,7 +127,11 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
       (result.prompts?.rows.length ?? 0) +
       (result.overview?.rows.length ?? 0);
 
-    if (log) logSearch(config, now, { query, mode, rows: result.rows, source, project });
+    const fellBackFrom =
+      result.facts?.fellBackFrom ?? result.prompts?.fellBackFrom ?? result.overview?.fellBackFrom;
+    if (log) {
+      logSearch(config, now, { query, mode, rows: result.rows, source, project, fellBackFrom });
+    }
     return result;
   }
 
@@ -164,11 +168,17 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
 
     const run = (effective) => {
       const plan = factPlan(effective, filters);
+      // Counted before the limit: a truncated overview that reports its own
+      // length as the total hides the truncation, which is the one thing an
+      // overview exists to make visible.
+      const total = db
+        .prepare(`select count(distinct f.topic) as c from ${plan.from} ${plan.where}`)
+        .get(...plan.params).c;
       const sql = `select f.topic as topic, t.summary as summary, count(*) as hits
                    from ${plan.from} left join topics t on t.id = f.topic
                    ${plan.where} group by f.topic order by hits desc, f.topic limit ?`;
       const rows = db.prepare(sql).all(...plan.params, filters.limit).map(plainRow);
-      return { rows, total: rows.length, match: effective };
+      return { rows, total, match: effective };
     };
 
     return withFallback(query, match, run);
@@ -197,7 +207,9 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
   }
 
   // A caller-written FTS5 expression can be malformed. Rather than failing the
-  // search, fall back to treating the same text as plain terms.
+  // search, fall back to treating the same text as plain terms — and say so in
+  // the result, so a search answered by different terms than were asked for is
+  // never silent.
   function withFallback(query, match, run) {
     try {
       return run(match);
@@ -205,7 +217,7 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
       if (!/fts5/i.test(String(error?.message))) throw error;
       const terms = termsQuery(query);
       if (!terms) return { rows: [], total: 0, match: null };
-      return run(terms);
+      return { ...run(terms), fellBackFrom: match };
     }
   }
 
@@ -221,6 +233,9 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
   // forever. Surfacing it is a read, so it belongs here rather than in a log the
   // user has to find.
   function quarantined() {
+    // Refreshed like any other read, or a session's project and transcript come
+    // back null purely because the index has not caught up.
+    refresh();
     const state = createStateStore(config).load();
     const sessions = new Map(
       db
@@ -319,9 +334,14 @@ function factPlan(match, { project, since, until, topic, section, session }) {
   if (session) filter.add("f.session = ?", session);
   if (project) {
     // A fact carries a truncated session id, so its project is that of the
-    // session whose id it prefixes.
+    // session whose id it prefixes. A fact whose line carried no session id at
+    // all is kept when its topic was fed by that project: imperfect formatting
+    // must not make knowledge invisible, and it must not put a fact in every
+    // project either.
     filter.add(
-      "exists (select 1 from sessions s where s.project = ? and s.session_id like f.session || '%')",
+      `exists (select 1 from sessions s where s.project = ?
+                 and ((f.session is not null and s.session_id like f.session || '%')
+                   or (f.session is null and s.topic = f.topic)))`,
       project
     );
   }
@@ -373,7 +393,7 @@ function plainRow(row) {
 
 // The instrumentation whose absence let a dead code path survive four months.
 // One line per search, and it must never be the reason a search fails.
-function logSearch(config, now, { query, mode, rows, source, project }) {
+function logSearch(config, now, { query, mode, rows, source, project, fellBackFrom }) {
   try {
     mkdirSync(config.corpusDir, { recursive: true });
     appendFileSync(
@@ -385,6 +405,7 @@ function logSearch(config, now, { query, mode, rows, source, project }) {
         mode,
         source,
         ...(project ? { project } : {}),
+        ...(fellBackFrom ? { fellBackFrom } : {}),
       })}\n`
     );
   } catch {

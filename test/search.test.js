@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { createSearch, ftsQuery, parseArgs } from "../src/search.js";
+import { createStateStore } from "../src/state.js";
 import {
   appendPrompts,
   appendSessions,
@@ -130,6 +131,19 @@ test("overview mode returns topic names with hit counts and no fact text", () =>
     for (const row of result.overview.rows) {
       assert.equal("text" in row, false);
     }
+  });
+});
+
+test("an overview reports how many topics matched, not how many it showed", () => {
+  withSearch((config, search) => {
+    for (let i = 0; i < 25; i++) {
+      writeTopic(config, `topic_${i}`, { Context: [`- Variants matter here [2026-05-12]`] });
+    }
+
+    const result = search.search({ query: "variants", mode: "overview" });
+
+    assert.equal(result.overview.rows.length, 20);
+    assert.equal(result.overview.total, 25);
   });
 });
 
@@ -389,6 +403,33 @@ test("facts are scoped by the project of the session that produced them", () => 
   });
 });
 
+test("a fact carrying no session id stays visible to its topic's project", () => {
+  withSearch((config, search) => {
+    // A line whose date parsed but whose session did not: the older format.
+    writeTopic(config, "alarm_tuning", { Context: ["- Catch-all alarm is noisy [2026-04-24]"] });
+    writeTopic(config, "other_topic", { Context: ["- Alarm noise elsewhere [2026-04-24]"] });
+    appendSessions(config, [
+      {
+        session_id: "14f63e34-0576-408d-b1ed-1c85e704c1f3",
+        transcript: "/t/14f63e34.jsonl",
+        cwd: "/work/aldis",
+        started: "2026-04-24T04:29:00Z",
+      },
+    ]);
+    createStateStore(config).markProcessed("14f63e34-0576-408d-b1ed-1c85e704c1f3", {
+      topic: { id: "alarm_tuning" },
+    });
+
+    const scoped = search.search({ query: "alarm", mode: "facts", project: "/work/aldis" });
+
+    // Kept, because its topic was fed by that project. Not put in every project.
+    assert.deepEqual(
+      scoped.facts.rows.map((row) => row.topic),
+      ["alarm_tuning"]
+    );
+  });
+});
+
 // --- Quarantined sessions ---
 
 test("a quarantined session can be surfaced on request", () => {
@@ -415,8 +456,9 @@ test("a quarantined session can be surfaced on request", () => {
         started: "2026-08-28T04:29:00Z",
       },
     ]);
-    search.refresh();
 
+    // No explicit refresh: surfacing a quarantined session refreshes like any
+    // other read, or its project and transcript come back null for no reason.
     const rows = search.quarantined();
 
     assert.equal(rows.length, 1);
