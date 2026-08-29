@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// claude-toc: Analyze transcripts and extract structured memory
-// Usage: node src/analyze.js [session_id]  — analyze one session
-//        node src/analyze.js --all         — analyze all unprocessed
+// claude-toc: Extraction — turn a session's transcript into facts on a topic.
+// Usage: node src/extract.js [session_id]  — extract one session
+//        node src/extract.js --all         — extract every unextracted session
+//        node src/extract.js --dedup       — merge duplicate topics
 
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { execSync } from "child_process";
-import { join } from "path";
-import { upsertTopic, appendToTopic, loadToc, findSimilarTopic, readTopicFile, mergeTopics, pickMergeWinner, MEMORY_DIR } from "./toc.js";
 
-const INDEX_FILE = join(MEMORY_DIR, "sessions.jsonl");
-const PROCESSED_FILE = join(MEMORY_DIR, "processed.json");
+import { createConfig } from "./config.js";
+import { createTopicStore } from "./toc.js";
+import { createStateStore } from "./state.js";
 
 // --- transcript parsing ---
 
@@ -49,7 +49,7 @@ function turnsToText(turns) {
 
 // --- extraction via claude ---
 
-function buildExtractPrompt(toc, existingFacts) {
+function buildExtractPrompt(toc) {
   let prompt = `You are a memory extraction system. Analyze this conversation and extract structured information.
 
 Return ONLY valid JSON with this exact schema:
@@ -81,20 +81,13 @@ Rules:
     prompt += `\nIf this conversation matches an existing topic, use that topic's id. Only create a new topic if no existing topic fits.\n`;
   }
 
-  if (existingFacts && existingFacts.length > 0) {
-    prompt += `\nKnown facts for the matched topic (DO NOT re-extract these):\n`;
-    for (const fact of existingFacts) {
-      prompt += `- ${fact}\n`;
-    }
-  }
-
   prompt += `\nCONVERSATION:\n`;
   return prompt;
 }
 
-function extract(conversationText, toc, existingFacts) {
+function extract(conversationText, toc) {
   try {
-    const prompt = buildExtractPrompt(toc || { topics: {} }, existingFacts || []);
+    const prompt = buildExtractPrompt(toc || { topics: {} });
     const result = execSync("claude -p", {
       input: prompt + conversationText,
       encoding: "utf-8",
@@ -116,29 +109,10 @@ function extract(conversationText, toc, existingFacts) {
   }
 }
 
-// --- processed tracking ---
-
-function loadProcessed() {
-  if (!existsSync(PROCESSED_FILE)) return {};
-  return JSON.parse(readFileSync(PROCESSED_FILE, "utf-8"));
-}
-
-function markProcessed(sessionId, result) {
-  const processed = loadProcessed();
-  processed[sessionId] = {
-    ts: new Date().toISOString(),
-    topic: result?.topic?.id || null,
-    summary: result?.topic?.summary || null,
-    context: result?.context?.length || 0,
-    decisions: result?.decisions?.length || 0,
-  };
-  writeFileSync(PROCESSED_FILE, JSON.stringify(processed, null, 2) + "\n");
-}
-
 // --- main ---
 
-function analyzeSession(session) {
-  console.log(`\nAnalyzing: ${session.session_id.slice(0, 8)} (${session.started})`);
+function extractSession(session, { topics, state }) {
+  console.log(`\nExtracting: ${session.session_id.slice(0, 8)} (${session.started})`);
 
   if (!existsSync(session.transcript)) {
     console.log("  transcript not found, skipping");
@@ -150,7 +124,7 @@ function analyzeSession(session) {
 
   if (textTurns.length < 2) {
     console.log("  too short, skipping");
-    markProcessed(session.session_id, null);
+    state.markProcessed(session.session_id, null);
     return;
   }
 
@@ -158,123 +132,108 @@ function analyzeSession(session) {
   console.log(`  ${textTurns.length} turns, ${text.length} chars`);
   console.log("  extracting...");
 
-  // Load TOC for topic-aware extraction
-  const toc = loadToc();
-
-  // Preliminary keyword match to find likely existing topic and its facts
-  let existingFacts = [];
-  const lower = text.toLowerCase();
-  for (const [id, topic] of Object.entries(toc.topics || {})) {
-    const hits = topic.keywords.filter(kw => lower.includes(kw.toLowerCase())).length;
-    if (hits >= 2) {
-      const content = readTopicFile(id);
-      if (content) {
-        existingFacts = content.split("\n").filter(l => l.startsWith("- ")).map(l => l.replace(/^- /, "").replace(/ \[.*\]$/, ""));
-      }
-      break;
-    }
-  }
-
-  const result = extract(text, toc, existingFacts);
+  const result = extract(text, topics.loadToc());
 
   if (!result || result.skip) {
     console.log("  nothing meaningful to extract");
-    markProcessed(session.session_id, null);
+    state.markProcessed(session.session_id, null);
     return;
   }
 
   // Check for similar existing topic before creating new one
   let topicId = result.topic.id;
-  const match = findSimilarTopic(topicId, result.topic.keywords);
+  const match = topics.findSimilarTopic(topicId, result.topic.keywords);
   if (match) {
     console.log(`  → matched existing topic: ${match.id} (score: ${match.score.toFixed(2)})`);
     topicId = match.id;
   }
 
-  upsertTopic(topicId, {
+  topics.upsertTopic(topicId, {
     keywords: result.topic.keywords,
     summary: result.topic.summary,
   });
 
   for (const fact of result.context || []) {
-    appendToTopic(topicId, "Context", fact, session.session_id);
+    topics.appendToTopic(topicId, "Context", fact, session.session_id);
   }
   for (const decision of result.decisions || []) {
-    appendToTopic(topicId, "Decisions", decision, session.session_id);
+    topics.appendToTopic(topicId, "Decisions", decision, session.session_id);
   }
 
-  markProcessed(session.session_id, result);
+  state.markProcessed(session.session_id, result);
 
   console.log(`  → topic: ${topicId}`);
   console.log(`  → ${result.context?.length || 0} facts, ${result.decisions?.length || 0} decisions`);
   console.log(`  → ${result.topic.summary}`);
 }
 
+function reportDedup({ topics }) {
+  const { merges, remaining } = topics.dedupTopics();
+  for (const { winnerId, loserId, score } of merges) {
+    console.log(`Merged ${loserId} → ${winnerId} (score: ${score.toFixed(2)})`);
+  }
+  console.log(`Merged ${merges.length} topic pair(s). ${remaining} topics remain.`);
+}
+
+function loadSessions(config) {
+  if (!existsSync(config.sessionIndexPath)) return null;
+  return readFileSync(config.sessionIndexPath, "utf-8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+}
+
 function main() {
+  const config = createConfig();
+  const stores = { topics: createTopicStore(config), state: createStateStore(config) };
   const arg = process.argv[2];
 
   if (arg === "--dedup") {
-    const toc = loadToc();
-    const ids = Object.keys(toc.topics);
-    const merged = new Set();
-    let mergeCount = 0;
-
-    for (let i = 0; i < ids.length; i++) {
-      if (merged.has(ids[i])) continue;
-      for (let j = i + 1; j < ids.length; j++) {
-        if (merged.has(ids[j])) continue;
-        const match = findSimilarTopic(ids[j], toc.topics[ids[j]].keywords);
-        if (match && match.id === ids[i] && match.score >= 0.6) {
-          const { winnerId, loserId } = pickMergeWinner(ids[i], ids[j]);
-          mergeTopics(winnerId, loserId);
-          merged.add(loserId);
-          mergeCount++;
-          console.log(`Merged ${loserId} → ${winnerId} (score: ${match.score.toFixed(2)})`);
-        }
-      }
-    }
-    const remaining = ids.length - merged.size;
-    console.log(`Merged ${mergeCount} topic pair(s). ${remaining} topics remain.`);
+    reportDedup(stores);
     return;
   }
 
-  if (!existsSync(INDEX_FILE)) {
+  const sessions = loadSessions(config);
+  if (!sessions) {
     console.log("No sessions indexed yet.");
-    process.exit(0);
+    return;
   }
 
-  const sessions = readFileSync(INDEX_FILE, "utf-8")
-    .trim()
-    .split("\n")
-    .map((l) => JSON.parse(l));
-
-  const processed = loadProcessed();
-
   if (arg === "--all") {
-    const unprocessed = sessions.filter((s) => !processed[s.session_id]);
+    const unprocessed = sessions.filter((s) => !stores.state.isProcessed(s.session_id));
     if (!unprocessed.length) {
       console.log("All sessions already processed.");
       return;
     }
     console.log(`Processing ${unprocessed.length} session(s)...`);
-    for (const s of unprocessed) analyzeSession(s);
+    for (const s of unprocessed) extractSession(s, stores);
   } else if (arg) {
     const session = sessions.find((s) => s.session_id.startsWith(arg));
     if (!session) {
       console.log(`No session matching "${arg}"`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
-    analyzeSession(session);
+    extractSession(session, stores);
   } else {
-    const unprocessed = sessions.filter((s) => !processed[s.session_id]);
-    console.log(`Sessions: ${sessions.length} total, ${unprocessed.length} unprocessed`);
+    const unprocessed = sessions.filter((s) => !stores.state.isProcessed(s.session_id));
+    console.log(`Sessions: ${sessions.length} total, ${unprocessed.length} unextracted`);
     for (const s of sessions) {
-      const p = processed[s.session_id];
-      const status = p ? `✓ ${p.topic || "skipped"}` : "pending";
-      console.log(`  ${s.session_id.slice(0, 8)}  ${s.started}  ${status}`);
+      const record = stores.state.processedRecord(s.session_id);
+      console.log(
+        `  ${s.session_id.slice(0, 8)}  ${s.started}  ${record ? `✓ ${record.topic || "skipped"}` : "pending"}`
+      );
     }
-    if (unprocessed.length) console.log(`\nRun: node src/analyze.js --all`);
+    if (unprocessed.length) console.log(`\nRun: node src/extract.js --all`);
   }
 }
 
-main();
+try {
+  main();
+} finally {
+  const lockSession = process.env.TOC_LOCK_SESSION;
+  if (lockSession) {
+    createStateStore(createConfig()).releaseExtraction(lockSession);
+  }
+}
