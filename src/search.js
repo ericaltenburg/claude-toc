@@ -444,6 +444,8 @@ const FLAGS = new Map([
   ["--sql", "sqlText"],
 ]);
 
+const FILTERS = ["date", "since", "until", "project", "topic", "section", "session"];
+
 export function parseArgs(argv) {
   const options = { mode: "both", words: [] };
 
@@ -515,7 +517,9 @@ function run(argv) {
       const rows = search.sql(options.sqlText);
       return report(options.json ? jsonText(rows) : renderRows(rows));
     }
-    if (!options.query && !options.date && !options.since && !options.until && !options.project) {
+    // A search needs terms or something to narrow by. Every filter counts:
+    // "the decisions in this topic" is a whole question with no terms in it.
+    if (!options.query && !FILTERS.some((filter) => options[filter])) {
       process.stdout.write(`${USAGE}\n`);
       return 2;
     }

@@ -97,6 +97,17 @@ test("a refused write reads as one line, not as a stack trace", () => {
   assert.equal(result.stderr, "toc-search: the read path is read-only: only select and with statements are allowed\n");
 });
 
+test("a filter with no query terms is a search, not a usage error", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", FACTS);
+
+  const result = run(config, ["--facts", "--topic", "broadcast_variants", "--section", "Decisions"]);
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /Will store variants in DynamoDB/);
+  assert.equal(result.stdout.includes("keyed by show id"), false);
+});
+
 test("no arguments prints usage rather than searching for nothing", () => {
   const config = tempCorpus();
 
