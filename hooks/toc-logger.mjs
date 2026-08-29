@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-// claude-toc: session indexer (UserPromptSubmit).
-//
-// Records the session and its transcript path so extraction can find it later.
-// It injects nothing: there is no stdout payload, so there is nothing that can
-// fail validation and no relevance to guess at. Any failure exits zero silently.
 
 import { appendFileSync, mkdirSync, readFileSync, existsSync } from "fs";
 
@@ -21,13 +16,12 @@ process.stdin.on("end", () => {
   try {
     indexSession(JSON.parse(input));
   } catch {
-    // a broken indexer must be invisible
   }
   process.exit(0);
 });
 
 function indexSession(data) {
-  if (process.env.TOC_EXTRACTING === "1") return; // fired inside the extractor
+  if (process.env.TOC_EXTRACTING === "1") return;
   if (!data.session_id || !data.transcript_path) return;
 
   const config = createConfig();

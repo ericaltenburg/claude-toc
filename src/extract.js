@@ -132,10 +132,6 @@ function extractSession(session, { topics, state }) {
   console.log(`  ${textTurns.length} turns, ${text.length} chars`);
   console.log("  extracting...");
 
-  // KNOWN ADR-0002 CONFLICT: this still hands the model every topic summary, so
-  // the prompt is O(corpus) — ~4K tokens today, ~75K at the projected 800
-  // topics. Bounding it needs the full-text index to supply ~10 candidate topics
-  // and a capped known-facts block, which is #6. Do not grow this prompt.
   const result = extract(text, topics.loadToc());
 
   if (!result || result.skip) {
@@ -236,7 +232,6 @@ function main() {
 try {
   main();
 } finally {
-  // Release the sweep lock the hook took on our behalf, whatever happened.
   const lockSession = process.env.TOC_LOCK_SESSION;
   if (lockSession) {
     createStateStore(createConfig()).releaseExtraction(lockSession);

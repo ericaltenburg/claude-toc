@@ -61,7 +61,6 @@ test("holds the extraction lock in the same state file", () => {
   assert.equal(state.acquireExtraction("session-one"), true);
   assert.equal(state.load().extraction.sessionId, "session-one");
 
-  // a second sweeper, reading the same state file, must not start
   assert.equal(createStateStore(config).acquireExtraction("session-two"), false);
 
   state.releaseExtraction();

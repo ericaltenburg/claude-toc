@@ -62,7 +62,6 @@ test("toc-logger indexes a session once, without a per-turn counter file", () =>
   assert.equal(entry.session_id, "cccccccc-1111-2222-3333-444455556666");
   assert.equal(entry.cwd, "/some/project");
 
-  // the leftover files this replaced: a lock file and one counter per session
   assert.equal(existsSync(join(config.corpusDir, ".analyzing")), false);
   assert.equal(existsSync(config.legacyProcessedPath), false);
   assert.deepEqual(

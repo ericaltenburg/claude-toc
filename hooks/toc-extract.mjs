@@ -1,9 +1,4 @@
 #!/usr/bin/env node
-// claude-toc: extraction trigger (SessionEnd).
-//
-// Takes the single extraction lock in the state file and spawns the extractor
-// detached, so session exit is never blocked. Writes nothing to stdout and exits
-// zero whatever happens; the spawned extractor releases the lock when it ends.
 
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
@@ -24,18 +19,17 @@ process.stdin.on("end", () => {
   try {
     triggerExtraction(JSON.parse(input));
   } catch {
-    // a broken trigger must be invisible
   }
   process.exit(0);
 });
 
 function triggerExtraction(data) {
-  if (process.env.TOC_EXTRACTING === "1") return; // fired inside the extractor
+  if (process.env.TOC_EXTRACTING === "1") return;
   if (!data.session_id) return;
 
   const config = createConfig();
   const state = createStateStore(config);
-  if (!state.acquireExtraction(data.session_id)) return; // one extraction at a time
+  if (!state.acquireExtraction(data.session_id)) return;
 
   const child = spawn("node", [EXTRACTOR, data.session_id.slice(0, 8)], {
     detached: true,

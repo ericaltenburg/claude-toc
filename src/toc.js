@@ -1,8 +1,3 @@
-// claude-toc: the topic store — the table of contents and the topic markdown
-// files that hold facts. Markdown is the source of truth.
-//
-// Takes a config object; it never resolves a path itself.
-
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "fs";
 import { join } from "path";
 
@@ -173,7 +168,6 @@ export function createTopicStore(config) {
     saveToc(toc);
   }
 
-  /** Merges every pair of topics similar enough to be the same subject. */
   function dedupTopics() {
     const ids = Object.keys(loadToc().topics);
     const merges = [];
@@ -206,13 +200,6 @@ export function createTopicStore(config) {
   };
 }
 
-// --- pure helpers ---
-
-/**
- * Locates one `## Section` in a topic file.
- * @returns {{ text: string, end: number } | null} the section's body and the
- *   offset the next fact should be inserted at, or null if it has no such section
- */
 function sectionBlock(content, section) {
   const idx = content.indexOf(`## ${section}`);
   if (idx === -1) return null;
@@ -229,7 +216,6 @@ function factLines(sectionText) {
     .map((l) => l.replace(/^- /, ""));
 }
 
-/** True if this section already holds the same fact, verbatim or reworded. */
 function isDuplicateFact(sectionText, entry) {
   if (sectionText.includes(entry.slice(0, 60))) return true;
   const newWords = normalize(entry);

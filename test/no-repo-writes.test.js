@@ -47,7 +47,6 @@ test("every write lands in the configured corpus and none in the repository", ()
   );
   createStateStore(config).markProcessed(session, null);
 
-  // both hooks, and the extractor's own entry point, run as real subprocesses
   runNode(LOGGER_HOOK, { input: sessionPayload(config), config });
   runNode(EXTRACT_HOOK, { input: sessionPayload(config), config });
   for (const args of [[], ["--dedup"], ["nosuchsession"]]) {
@@ -55,13 +54,11 @@ test("every write lands in the configured corpus and none in the repository", ()
     assert.equal(result.stderr, "", `node src/extract.js ${args.join(" ")}`);
   }
 
-  // the work actually happened, in the temporary corpus
   assert.ok(existsSync(join(config.topicsDir, "alcs_broadcast_variants.md")));
   assert.ok(existsSync(config.tocPath));
   assert.ok(existsSync(config.statePath));
   assert.ok(readFileSync(config.sessionIndexPath, "utf-8").includes("aaaaaaaa"));
 
-  // and nothing appeared in the repository, tracked or ignored
   assert.equal(repoStatus(), before);
   assert.equal(existsSync(join(REPO_ROOT, "memory")), false);
 });
@@ -80,14 +77,12 @@ test("the extractor lists sessions without writing anything", () => {
 });
 
 test("only the config module knows where the corpus is", () => {
-  // Any module that names a corpus artifact, reads the home directory, or joins
-  // its own file location into a data path has a second source of truth.
   const forbidden =
     /homedir\(|import\.meta\.dirname|__dirname|toc\.json|sessions\.jsonl|state\.json|processed\.json|history\.jsonl|topics\/|"topics"|"memory"/;
 
   const offenders = [];
   for (const relative of trackedSources()) {
-    if (relative === "src/config.js") continue; // the one place allowed to know
+    if (relative === "src/config.js") continue;
     const code = stripComments(readFileSync(join(REPO_ROOT, relative), "utf-8"));
     if (forbidden.test(code)) offenders.push(relative);
   }
@@ -135,7 +130,7 @@ function grepSources(pattern) {
       .split("\n")
       .filter(Boolean);
   } catch (err) {
-    if (err.status === 1) return []; // git grep exits 1 when nothing matches
+    if (err.status === 1) return [];
     throw err;
   }
 }

@@ -1,6 +1,3 @@
-// Seam 1 in test form: a corpus in a temporary directory, and the env that
-// points a subprocess at it. Shared by every test that needs one.
-
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +10,6 @@ export const LOGGER_HOOK = join(REPO_ROOT, "hooks", "toc-logger.mjs");
 export const EXTRACT_HOOK = join(REPO_ROOT, "hooks", "toc-extract.mjs");
 export const EXTRACTOR = join(REPO_ROOT, "src", "extract.js");
 
-/** A config pointed at an empty corpus under the OS temp directory. */
 export function tempCorpus() {
   const root = mkdtempSync(join(tmpdir(), "claude-toc-"));
   const config = createConfig(
@@ -30,7 +26,6 @@ export function tempCorpus() {
   return config;
 }
 
-/** The environment a hook or the extractor needs to use that corpus. */
 export function corpusEnv(config, extra = {}) {
   return {
     ...process.env,
@@ -41,7 +36,6 @@ export function corpusEnv(config, extra = {}) {
   };
 }
 
-/** Runs a hook or entry point as a real subprocess, as Claude Code would. */
 export function runNode(script, { input = "", args = [], config, env = {} } = {}) {
   return spawnSync("node", [script, ...args], {
     input,

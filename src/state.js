@@ -1,10 +1,3 @@
-// claude-toc: sweep and extraction state — one file, not three.
-//
-// Replaces the old processed.json plus .analyzing lock plus per-session .turns-*
-// counters. Everything the sweep needs to know lives in state.json inside the
-// corpus: which sessions have been processed, and whether an extraction is
-// currently running.
-
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "fs";
 
 const STATE_VERSION = 1;
@@ -25,17 +18,12 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
           extraction: state.extraction ?? null,
         };
       } catch {
-        // corrupt state is recoverable: it is derived from work already paid for,
-        // and losing it only means a session may be extracted twice.
         return EMPTY();
       }
     }
     return adoptLegacyProcessed();
   }
 
-  // The corpus predates this file: sessions processed before the rewrite are
-  // recorded in processed.json. Read it once so backfill does not pay for them
-  // again. Never written to.
   function adoptLegacyProcessed() {
     const state = EMPTY();
     const legacy = config.legacyProcessedPath;
@@ -43,7 +31,6 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
     try {
       state.processed = JSON.parse(readFileSync(legacy, "utf-8")) ?? {};
     } catch {
-      // ignore — an unreadable legacy file just means no head start
     }
     return state;
   }
@@ -59,7 +46,6 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
     return Boolean(load().processed[sessionId]);
   }
 
-  /** What extraction recorded for a session, or null if it never ran on it. */
   function processedRecord(sessionId) {
     return load().processed[sessionId] ?? null;
   }
@@ -76,7 +62,6 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
     save(state);
   }
 
-  /** @returns {boolean} true if this caller now holds the extraction lock */
   function acquireExtraction(sessionId) {
     const state = load();
     const current = state.extraction;
@@ -85,16 +70,12 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
     state.extraction = { sessionId, startedAt: new Date().toISOString() };
     save(state);
 
-    // The write above is a read-modify-write, so two sweeps can both get this
-    // far. Re-read: last writer wins, and only the caller that still sees its
-    // own id proceeds, so exactly one extraction starts.
     if (load().extraction?.sessionId !== sessionId) return false;
 
     owned = sessionId;
     return true;
   }
 
-  /** Releases only the lock this caller took, so a slow process cannot clobber a fresh one. */
   function releaseExtraction(sessionId = owned) {
     if (!sessionId) return;
     const state = load();
