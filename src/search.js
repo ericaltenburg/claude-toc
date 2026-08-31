@@ -595,7 +595,7 @@ function run(argv) {
     }
     if (options.sqlText) {
       const rows = search.sql(options.sqlText, [], { source: options.source ?? "explicit" });
-      return report(options.json ? jsonText(rows) : renderRows(rows));
+      return report(options.json ? jsonTextWithAttribution(rows) : renderRows(rows));
     }
     if (!hasSomethingToSearchFor(options)) {
       process.stdout.write(`${USAGE}\n`);
@@ -603,7 +603,7 @@ function run(argv) {
     }
 
     const result = search.search(options);
-    return report(options.json ? jsonText(result) : render(result));
+    return report(options.json ? jsonTextWithAttribution(result) : render(result));
   } finally {
     search.close();
   }
@@ -622,10 +622,18 @@ function jsonText(value) {
   return { text: `${JSON.stringify(value, null, 2)}\n` };
 }
 
+// Machine-readable output is read by the same reader as the text, so it carries the
+// contract too. Anything else lets `--json` hand over facts with nothing attached.
+function jsonTextWithAttribution(value) {
+  const payload = Array.isArray(value) ? { rows: value } : value;
+  return jsonText({ ...payload, attribution: ATTRIBUTION_NOTE });
+}
+
 const ATTRIBUTION =
   "note: every line above is dated evidence, not current truth. Attribute it to its\n" +
   "date when you use it, and check anything load-bearing against the systems of record.\n";
 
+const ATTRIBUTION_NOTE = ATTRIBUTION.replace(/^note: /, "").replace(/\s+/g, " ").trim();
 
 function render(result) {
   const parts = [];
@@ -675,7 +683,7 @@ function pad(index) {
 
 function renderRows(rows) {
   if (!rows.length) return { text: "no rows.\n" };
-  return { text: `${rows.map((row) => JSON.stringify(row)).join("\n")}\n` };
+  return { text: `${rows.map((row) => JSON.stringify(row)).join("\n")}\n\n${ATTRIBUTION}` };
 }
 
 function renderQuarantined(rows) {

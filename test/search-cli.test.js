@@ -84,6 +84,17 @@ test("smoke queries exit non-zero when one comes back empty", () => {
   assert.match(result.stdout, /smoke queries FAILED/);
 });
 
+test("rows drilled out with sql carry the attribution note like any other result", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", FACTS);
+
+  const result = run(config, ["--sql", "select date, text from facts order by line"]);
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /keyed by show id/);
+  assert.match(result.stdout, /dated evidence, not current truth/);
+});
+
 test("a refused write reads as one line, not as a stack trace", () => {
   const config = tempCorpus();
 
@@ -139,6 +150,18 @@ test("an automatic search run from a subdirectory still finds the project's mate
   assert.equal(result.status, 0);
   assert.match(result.stdout, /variants here/, "the repository is the project, not the cwd");
   assert.equal(result.stdout.includes("variants there"), false);
+});
+
+test("json output carries the attribution note too", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", FACTS);
+
+  const searched = JSON.parse(run(config, ["--facts", "--json", "variants"]).stdout);
+  const drilled = JSON.parse(run(config, ["--json", "--sql", "select date, text from facts"]).stdout);
+
+  assert.match(searched.attribution, /dated evidence, not current truth/);
+  assert.match(drilled.attribution, /dated evidence, not current truth/);
+  assert.equal(drilled.rows.length, 2);
 });
 
 test("an unrecognised --source is a usage error rather than a mislabelled log line", () => {
