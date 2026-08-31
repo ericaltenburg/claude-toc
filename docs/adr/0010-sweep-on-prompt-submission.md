@@ -43,6 +43,12 @@ tests every transcript against it. Re-reading the state file per transcript cost
 400 ms across the transcripts already on disk, which is latency the user would feel
 on every prompt; the snapshot costs 30 ms.
 
+**The hook decides on the cheap half of selection; the extractor does the rest.** The
+hook only needs to know whether any session is idle at all, which is a directory walk
+and a stat. Reading into a transcript to see how it opens (ADR 0011) happens in the
+detached extractor, which does the authoritative selection. Nothing expensive runs
+twice, and nothing expensive runs in front of a prompt.
+
 **A session is a transcript whose file name is a session id.** Claude Code also writes
 subagent transcripts under a session's own directory, named `agent-*`. Those are not
 sessions: they have no session id, and their facts would be attributed to an

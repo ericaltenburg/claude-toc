@@ -5,7 +5,12 @@ const EXTRACTION_LEASE_MS = 300_000;
 export const SWEEP_DEBOUNCE_MS = 60_000;
 export const ATTEMPTS_BEFORE_QUARANTINE = 3;
 export const START_OF_TRANSCRIPT = 0;
+
 const EXTRACTOR_SESSIONS_REMEMBERED = 1000;
+
+export function transcriptHasUnreadTurns(size, offset) {
+  return size !== offset;
+}
 
 const EMPTY = () => ({
   version: STATE_VERSION,
@@ -92,6 +97,7 @@ export function createStateStore(
       isQuarantined: (sessionId) => Boolean(state.quarantined[sessionId]),
       isExtractorSession: (sessionId) => Boolean(state.extractorSessions[sessionId]),
       extractionOffset: (sessionId) => offsetIn(state, sessionId),
+      hasUnreadTurns: (sessionId, size) => transcriptHasUnreadTurns(size, offsetIn(state, sessionId)),
     };
   }
 
@@ -150,10 +156,6 @@ export function createStateStore(
     );
   }
 
-  function isExtractorSession(sessionId) {
-    return Boolean(load().extractorSessions[sessionId]);
-  }
-
   function acquireExtraction(sessionId) {
     const state = load();
     const current = state.extraction;
@@ -192,7 +194,6 @@ export function createStateStore(
     snapshot,
     claimSweep,
     recordExtractorSession,
-    isExtractorSession,
     acquireExtraction,
     releaseExtraction,
   };

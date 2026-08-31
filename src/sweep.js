@@ -12,6 +12,8 @@ const BYTES_SCANNED_FOR_THE_FIRST_MESSAGE = 1024 * 1024;
 
 const A_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// --- Choosing what to sweep ---
+
 export function createSweeper(
   config,
   state,
@@ -21,16 +23,18 @@ export function createSweeper(
     now = () => Date.now(),
   } = {}
 ) {
-  function candidates() {
+  function idleSessions() {
     const recorded = state.snapshot();
-    const idle = transcriptsOnDisk()
+    return transcriptsOnDisk()
       .filter((transcript) => isReadyToExtract(transcript, recorded))
       .sort((a, b) => b.modified - a.modified);
+  }
 
+  function candidates() {
     const chosen = [];
-    for (const transcript of idle) {
+    for (const transcript of idleSessions()) {
       if (chosen.length === sessionsPerSweep) break;
-      const opening = firstMessageIn(transcript.path);
+      const opening = howTheTranscriptOpens(transcript.path);
       if (opening.isTheExtractionPrompt) continue;
       chosen.push({
         session_id: transcript.sessionId,
@@ -44,7 +48,7 @@ export function createSweeper(
   function isReadyToExtract({ sessionId, path, modified, size }, recorded) {
     if (isTheExtractorsOwnSession(sessionId, path, recorded)) return false;
     if (recorded.isQuarantined(sessionId)) return false;
-    if (everythingIsRead(size, recorded.extractionOffset(sessionId))) return false;
+    if (!recorded.hasUnreadTurns(sessionId, size)) return false;
     return now() - modified >= idleAfterMs;
   }
 
@@ -77,11 +81,7 @@ export function createSweeper(
     return transcripts;
   }
 
-  return { candidates };
-}
-
-function everythingIsRead(size, offset) {
-  return size === offset;
+  return { candidates, idleSessions };
 }
 
 function statOrNull(path) {
@@ -92,7 +92,9 @@ function statOrNull(path) {
   }
 }
 
-export function firstMessageIn(transcriptPath) {
+// --- How a transcript opens ---
+
+export function howTheTranscriptOpens(transcriptPath) {
   let cwd = null;
 
   for (const record of openingRecordsOf(transcriptPath)) {

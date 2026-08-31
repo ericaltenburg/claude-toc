@@ -16,7 +16,7 @@ import { pathToFileURL } from "node:url";
 import { createConfig } from "./config.js";
 import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { recordedProjectsUnder, salientTermsQuery } from "./search.js";
-import { createStateStore, START_OF_TRANSCRIPT } from "./state.js";
+import { createStateStore, START_OF_TRANSCRIPT, transcriptHasUnreadTurns } from "./state.js";
 import { createSweeper, EXTRACTION_PROMPT_MARKER } from "./sweep.js";
 import { createTopicStore } from "./toc.js";
 
@@ -574,7 +574,10 @@ function sessionsWithUnreadTranscript(sessions, state) {
 function hasUnreadTranscript(session, state) {
   if (state.isQuarantined(session.session_id)) return false;
   if (!session.transcript || !existsSync(session.transcript)) return false;
-  return statSync(session.transcript).size > state.extractionOffset(session.session_id);
+  return transcriptHasUnreadTurns(
+    statSync(session.transcript).size,
+    state.extractionOffset(session.session_id)
+  );
 }
 
 function listSessions(sessions, state) {

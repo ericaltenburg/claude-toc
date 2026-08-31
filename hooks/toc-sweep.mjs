@@ -28,7 +28,7 @@ function sweep() {
   const config = createConfig();
   const state = createStateStore(config);
   if (!state.claimSweep()) return;
-  if (!createSweeper(config, state).candidates().length) return;
+  if (!createSweeper(config, state).idleSessions().length) return;
 
   const lockSession = randomUUID();
   if (!state.acquireExtraction(lockSession)) return;

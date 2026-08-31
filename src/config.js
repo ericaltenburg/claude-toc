@@ -1,7 +1,7 @@
 import { homedir } from "os";
 import { join } from "path";
 
-const CLAUDE_CODE_PROJECT_DIR_NAME = (path) => path.replace(/[^a-zA-Z0-9]/g, "-");
+const claudeCodeProjectDirNameFor = (path) => path.replace(/[^a-zA-Z0-9]/g, "-");
 
 export function createConfig(overrides = {}, env = process.env) {
   const claudeDir =
@@ -26,7 +26,7 @@ export function createConfig(overrides = {}, env = process.env) {
     promptLog,
     extractorDir,
     extractorCommand,
-    extractorTranscriptsDir: join(transcriptsDir, CLAUDE_CODE_PROJECT_DIR_NAME(extractorDir)),
+    extractorTranscriptsDir: join(transcriptsDir, claudeCodeProjectDirNameFor(extractorDir)),
     topicsDir: join(corpusDir, "topics"),
     topicsDirName: "topics",
     tocPath: join(corpusDir, "toc.json"),

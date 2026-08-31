@@ -6,10 +6,10 @@
 
 Extraction runs by asking Claude to distill a transcript. That request is itself a
 Claude session, so it produces a transcript of its own — one that contains the
-extraction prompt and the facts extracted from someone else's conversation. 93
-transcripts on disk contain the extraction prompt. None had been ingested only
-because the old code never globbed for candidates; the moment sweeping was added
-(ADR 0010), that recursion activated.
+extraction prompt and the facts extracted from someone else's conversation. 85 session
+transcripts on disk contain the extraction prompt. None had been ingested only because
+the old code never globbed for candidates; the moment sweeping was added (ADR 0010),
+that recursion activated.
 
 Worse, the extraction subprocess inherited whatever project directory the hook fired
 in, so those transcripts were scattered across 25 unrelated project directories.
@@ -34,12 +34,19 @@ before it touches the state file.
 extractor transcripts have no recorded identifier and sit outside the fixed directory,
 so they can only be recognised by what they contain.
 
+The spec scoped this check to backfill only. It runs on every sweep instead, because
+the transcripts it protects against stay on disk until they rotate away and a sweep
+reaches back through all of them, not only the ones backfill visited. It is affordable
+there: the check reads the opening of at most three transcripts per sweep, and it runs
+in the detached extractor rather than in the hook (ADR 0010), so no prompt waits on it.
+
 **The content check tests the first message of a transcript, not the whole file.** A
 session that merely *discusses* the extraction code contains the marker too — a
 session that reads `src/extract.js` contains it by definition, and this project's own
-development sessions are the clearest example. Measured on the transcripts on disk: a
-first-message check classifies 76 as extractor output and keeps 17, and every one of
-the 17 is real work about claude-toc. A whole-file check would have discarded all 17.
+development sessions are the clearest example. Measured over the 85 session transcripts
+containing the marker: a first-message check classifies 79 as extractor output and keeps
+6, and every one of the 6 is real work — five of them this project's own. A whole-file
+check would have discarded all 6.
 
 **"First message" means the first conversational record, not the first line.** Claude
 Code opens a transcript with metadata records — agent settings, mode, permission mode,

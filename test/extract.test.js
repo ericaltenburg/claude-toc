@@ -584,7 +584,7 @@ test("the extractor records the session id it runs the model under, in a fixed d
   const sessionId = args[args.indexOf("--session-id") + 1];
   assert.equal(command, "claude");
   assert.equal(cwd, config.extractorDir);
-  assert.ok(createStateStore(config).isExtractorSession(sessionId), sessionId);
+  assert.ok(createStateStore(config).snapshot().isExtractorSession(sessionId), sessionId);
 });
 
 test("chunkTurns keeps turns whole until a single turn cannot fit", () => {
