@@ -2,12 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 
-import {
-  chunkTurns,
-  claudeUnderOurOwnSessionIds,
-  createExtractor,
-  parseModelOutput,
-} from "../src/extract.js";
+import { chunkTurns, createExtractor, parseModelOutput } from "../src/extract.js";
 import { createSearch } from "../src/search.js";
 import { createStateStore } from "../src/state.js";
 import {
@@ -568,23 +563,18 @@ test("a malformed transcript line is skipped rather than aborting the slice", ()
   assert.equal(result.status, "extracted");
 });
 
-test("the extractor records the session id it runs the model under, in a fixed directory", () => {
-  const config = tempCorpus();
-  const invocations = [];
-  const callModel = claudeUnderOurOwnSessionIds(config, {
-    run: (command, args, options) => {
-      invocations.push({ command, args, cwd: options.cwd });
-      return JSON.stringify(MODEL_OUTPUT);
-    },
-  });
+test("each chunk's model call carries the session it came from, so spend is attributable", () => {
+  const config = corpusWithOneTopic();
+  const model = stubModel([MODEL_OUTPUT]);
+  const extractor = extractorFor(config, model);
 
-  callModel({ prompt: "extract this", model: "a-model" });
+  extractor.extractSession(sessionIn(config));
+  extractor.close();
 
-  const [{ command, args, cwd }] = invocations;
-  const sessionId = args[args.indexOf("--session-id") + 1];
-  assert.equal(command, "claude");
-  assert.equal(cwd, config.extractorDir);
-  assert.ok(createStateStore(config).snapshot().isExtractorSession(sessionId), sessionId);
+  assert.deepEqual(
+    model.calls.map((call) => call.sessionId),
+    [SESSION]
+  );
 });
 
 test("chunkTurns keeps turns whole until a single turn cannot fit", () => {

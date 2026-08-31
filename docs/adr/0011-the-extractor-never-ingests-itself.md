@@ -1,6 +1,6 @@
 # ADR 0011: The extractor never ingests its own sessions
 
-**Status:** accepted (2026-08-31)
+**Status:** accepted (2026-08-31), layers 1-3 superseded for new extractions by ADR 0012
 
 ## Context
 

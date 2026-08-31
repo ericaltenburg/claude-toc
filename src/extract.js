@@ -1,22 +1,13 @@
 #!/usr/bin/env node
-import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import {
-  closeSync,
-  existsSync,
-  fstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readSync,
-  statSync,
-} from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
+import { createModelCall } from "./bedrock.js";
 import { createConfig } from "./config.js";
 import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { recordedProjectsUnder, salientTermsQuery } from "./search.js";
 import { createStateStore, START_OF_TRANSCRIPT, transcriptHasUnreadTurns } from "./state.js";
+import { createSpendLog } from "./spend.js";
 import { createSweeper, EXTRACTION_PROMPT_MARKER } from "./sweep.js";
 import { createTopicStore } from "./toc.js";
 
@@ -31,9 +22,6 @@ const EXTRACTION_MODEL_THEN_FALLBACK = [
   "global.anthropic.claude-sonnet-5",
   "global.anthropic.claude-opus-5",
 ];
-const MODEL_TIMEOUT_MS = 120_000;
-const MODEL_OUTPUT_LIMIT = 2 * 1024 * 1024;
-
 const SHORTEST_MEANINGFUL_TURN = 5;
 const TURNS_WORTH_EXTRACTING = 2;
 
@@ -202,29 +190,9 @@ export function buildExtractPrompt({ candidates = [], knownFacts = [] } = {}) {
 
 // --- The model call ---
 
-export function claudeUnderOurOwnSessionIds(config, { run = execFileSync } = {}) {
-  const state = createStateStore(config);
-
-  return function callClaude({ prompt, model }) {
-    const sessionId = randomUUID();
-    state.recordExtractorSession(sessionId);
-    mkdirSync(config.extractorDir, { recursive: true });
-
-    return run("claude", ["-p", "--session-id", sessionId], {
-      cwd: config.extractorDir,
-      input: prompt,
-      encoding: "utf-8",
-      maxBuffer: MODEL_OUTPUT_LIMIT,
-      timeout: MODEL_TIMEOUT_MS,
-      env: {
-        ...process.env,
-        AWS_PROFILE: "claudecode",
-        CLAUDE_CODE_USE_BEDROCK: "1",
-        DISABLE_PROMPT_CACHING: "1",
-        ANTHROPIC_MODEL: model,
-      },
-    });
-  };
+export function bedrockBilledToOurOwnProfile(config, options = {}) {
+  const spend = createSpendLog(config);
+  return createModelCall(config, { onUsage: (usage) => spend.record(usage), ...options });
 }
 
 const FENCE = /^```[\w-]*\n?|\n?```$/g;
@@ -280,7 +248,7 @@ function stringsOnly(value) {
 export function createExtractor(
   config,
   {
-    callModel = claudeUnderOurOwnSessionIds(config),
+    callModel = bedrockBilledToOurOwnProfile(config),
     maxChunkChars = CHARS_PER_MODEL_CALL,
     candidateLimit = CANDIDATE_TOPICS_IN_A_PROMPT,
     factLimit = KNOWN_FACTS_IN_A_PROMPT,
@@ -315,7 +283,7 @@ export function createExtractor(
 
     let results;
     try {
-      results = chunks.map((chunk) => extractChunk(prompt, chunk));
+      results = chunks.map((chunk) => extractChunk(prompt, chunk, sessionId));
     } catch (error) {
       const failure = state.recordFailure(sessionId, error.message);
       return outcome(failure.quarantined ? "quarantined" : "failed", {
@@ -356,11 +324,11 @@ export function createExtractor(
     });
   }
 
-  function extractChunk(prompt, chunk) {
+  function extractChunk(prompt, chunk, sessionId) {
     let lastError;
     for (const model of EXTRACTION_MODEL_THEN_FALLBACK) {
       try {
-        return parseModelOutput(callModel({ prompt: prompt + chunk, model, chunk }));
+        return parseModelOutput(callModel({ prompt: prompt + chunk, model, chunk, sessionId }));
       } catch (error) {
         log(`  ${model} failed: ${error.message}`);
         if (error instanceof MalformedOutput) throw error;

@@ -16,6 +16,7 @@ export const REPO_ROOT = join(import.meta.dirname, "..", "..");
 export const LOGGER_HOOK = join(REPO_ROOT, "hooks", "toc-logger.mjs");
 export const SWEEP_HOOK = join(REPO_ROOT, "hooks", "toc-sweep.mjs");
 export const EXTRACTOR = join(REPO_ROOT, "bin", "toc-extract");
+export const SPEND_REPORT = join(REPO_ROOT, "bin", "toc-spend");
 
 export function tempCorpus() {
   const root = mkdtempSync(join(tmpdir(), "claude-toc-"));

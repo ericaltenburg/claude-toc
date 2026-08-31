@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { statSync } from "node:fs";
+import { statSync, writeFileSync } from "node:fs";
 
 import { createStateStore, ATTEMPTS_BEFORE_QUARANTINE } from "../src/state.js";
 import { createSweeper, EXTRACTION_PROMPT_MARKER, SESSIONS_PER_SWEEP } from "../src/sweep.js";
@@ -71,10 +71,13 @@ test("a quarantined session is not swept", () => {
   assert.deepEqual(sweptSessions(config), []);
 });
 
-test("a session the extractor was spawned under is never swept", () => {
+test("a session recorded as the extractor's own is never swept", () => {
   const config = tempCorpus();
   transcript(config, sessionId(1));
-  createStateStore(config).recordExtractorSession(sessionId(1));
+  writeFileSync(
+    config.statePath,
+    JSON.stringify({ extractorSessions: { [sessionId(1)]: "2026-08-31T19:00:00.000Z" } })
+  );
 
   assert.deepEqual(sweptSessions(config), []);
 });

@@ -6,8 +6,6 @@ export const SWEEP_DEBOUNCE_MS = 60_000;
 export const ATTEMPTS_BEFORE_QUARANTINE = 3;
 export const START_OF_TRANSCRIPT = 0;
 
-const EXTRACTOR_SESSIONS_REMEMBERED = 1000;
-
 export function transcriptHasUnreadTurns(size, offset) {
   return size !== offset;
 }
@@ -139,23 +137,6 @@ export function createStateStore(
     return true;
   }
 
-  function recordExtractorSession(sessionId) {
-    const state = load();
-    state.extractorSessions[sessionId] = new Date().toISOString();
-    state.extractorSessions = mostRecentlyRecorded(state.extractorSessions);
-    save(state);
-  }
-
-  function mostRecentlyRecorded(sessions) {
-    const entries = Object.entries(sessions);
-    if (entries.length <= EXTRACTOR_SESSIONS_REMEMBERED) return sessions;
-    return Object.fromEntries(
-      entries
-        .sort(([, a], [, b]) => String(b).localeCompare(String(a)))
-        .slice(0, EXTRACTOR_SESSIONS_REMEMBERED)
-    );
-  }
-
   function acquireExtraction(sessionId) {
     const state = load();
     const current = state.extraction;
@@ -193,7 +174,6 @@ export function createStateStore(
     isQuarantined,
     snapshot,
     claimSweep,
-    recordExtractorSession,
     acquireExtraction,
     releaseExtraction,
   };
