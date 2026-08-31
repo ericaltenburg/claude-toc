@@ -57,12 +57,12 @@ test("records a skipped session so it is not retried forever", () => {
   assert.equal(state.load().processed["nothing"].topic, null);
 });
 
-test("holds the extraction lock in the same state file", () => {
+test("holds the extraction lease in the same state file", () => {
   const config = freshConfig();
   const state = createStateStore(config);
 
   assert.equal(state.acquireExtraction("session-one"), true);
-  assert.equal(state.load().extraction.sessionId, "session-one");
+  assert.equal(state.load().extraction.holder, "session-one");
 
   assert.equal(createStateStore(config).acquireExtraction("session-two"), false);
 
@@ -78,11 +78,11 @@ test("takes over an extraction lock older than its lease", () => {
   const stale = new Date(Date.now() - 10 * 60_000).toISOString();
   writeFileSync(
     config.statePath,
-    JSON.stringify({ version: 1, processed: {}, extraction: { sessionId: "dead", startedAt: stale } })
+    JSON.stringify({ version: 1, processed: {}, extraction: { holder: "dead", startedAt: stale } })
   );
 
   assert.equal(state.acquireExtraction("session-two"), true);
-  assert.equal(state.load().extraction.sessionId, "session-two");
+  assert.equal(state.load().extraction.holder, "session-two");
 });
 
 test("releasing a lock another process took does not clobber it", () => {
@@ -92,7 +92,7 @@ test("releasing a lock another process took does not clobber it", () => {
 
   createStateStore(config).releaseExtraction("someone-else");
 
-  assert.equal(owner.load().extraction.sessionId, "mine");
+  assert.equal(owner.load().extraction.holder, "mine");
 });
 
 test("adopts an existing processed.json once and never writes it again", () => {

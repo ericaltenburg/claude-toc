@@ -142,7 +142,7 @@ test("a second prompt inside the debounce window sweeps nothing", () => {
   assert.equal(spawns(spawnLog).length, 1);
 
   createStateStore(config).releaseExtraction(
-    createStateStore(config).load().extraction.sessionId
+    createStateStore(config).load().extraction.holder
   );
   sweepWith(config, { spawnsRecordedIn: spawnLog });
 

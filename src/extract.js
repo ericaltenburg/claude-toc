@@ -6,6 +6,7 @@ import { createModelCall } from "./bedrock.js";
 import { createConfig } from "./config.js";
 import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { recordedProjectsUnder, salientTermsQuery } from "./search.js";
+import { indexedSessions } from "./session-index.js";
 import { createStateStore, START_OF_TRANSCRIPT, transcriptHasUnreadTurns } from "./state.js";
 import { createSpendLog } from "./spend.js";
 import { createSweeper, EXTRACTION_PROMPT_MARKER } from "./sweep.js";
@@ -498,22 +499,6 @@ function distinct(values) {
 
 // --- CLI ---
 
-function loadSessions(config) {
-  if (!existsSync(config.sessionIndexPath)) return null;
-  return readFileSync(config.sessionIndexPath, "utf-8")
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-}
-
 function reportExtraction(session, result) {
   const short = String(session.session_id ?? "unknown").slice(0, 8);
   console.log(`\nExtracting: ${short} (${session.started ?? "undated"})`);
@@ -602,7 +587,7 @@ function main(argv) {
     return 0;
   }
 
-  const sessions = loadSessions(config);
+  const sessions = indexedSessions(config);
   if (!sessions) {
     console.log("No sessions indexed yet.");
     return 0;

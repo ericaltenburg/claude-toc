@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
-import { appendFileSync, mkdirSync, readFileSync, existsSync } from "fs";
-
 import { createConfig } from "../src/config.js";
+import { alreadyIndexed, recordSession } from "../src/session-index.js";
 
 const STDIN_TIMEOUT_MS = 5000;
 
@@ -25,19 +24,12 @@ function indexSession(data) {
   if (!data.session_id || !data.transcript_path) return;
 
   const config = createConfig();
-  const alreadyIndexed =
-    existsSync(config.sessionIndexPath) &&
-    readFileSync(config.sessionIndexPath, "utf-8").includes(data.session_id);
-  if (alreadyIndexed) return;
+  if (alreadyIndexed(config, data.session_id)) return;
 
-  mkdirSync(config.corpusDir, { recursive: true });
-  appendFileSync(
-    config.sessionIndexPath,
-    JSON.stringify({
-      session_id: data.session_id,
-      transcript: data.transcript_path,
-      cwd: data.cwd,
-      started: new Date().toISOString(),
-    }) + "\n"
-  );
+  recordSession(config, {
+    sessionId: data.session_id,
+    transcript: data.transcript_path,
+    project: data.cwd,
+    started: new Date().toISOString(),
+  });
 }
