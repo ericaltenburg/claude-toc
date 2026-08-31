@@ -4,13 +4,12 @@ import { dirname, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createConfig } from "./config.js";
-import { openIndex } from "./search-index.js";
+import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { createStateStore } from "./state.js";
 
 export const FACT_LIMIT = 20;
 export const PROMPT_LIMIT = 10;
 
-// See docs/adr/0006 for why the source of a search also decides its project scope.
 const CLAUDES_OWN_JUDGEMENT = "automatic";
 const SOURCES_A_CALLER_MAY_ASK_FOR = [CLAUDES_OWN_JUDGEMENT, "explicit"];
 const SOURCES = [...SOURCES_A_CALLER_MAY_ASK_FOR, "smoke"];
@@ -29,6 +28,8 @@ const STOPWORDS = new Set(
 const FTS5_OPERATOR_OR_PREFIX_SEARCH = /\b(?:AND|OR|NOT|NEAR)\b|[\p{L}\p{N}]\*/u;
 const TERM = /[\p{L}\p{N}_]+/gu;
 const SHORTEST_USABLE_TERM = 2;
+const SHORTEST_SALIENT_TERM = 3;
+const MOST_REPEATED_TERMS_QUERIED = 24;
 
 const MATCH_EVERY_ROW_THE_FILTERS_ALLOW = { match: null, matchesNothing: false };
 const MATCH_NOTHING = { match: null, matchesNothing: true };
@@ -45,6 +46,21 @@ export function termsQuery(text) {
   const chosen = meaningful.length ? meaningful : usable;
   if (!chosen.length) return null;
   return chosen.map(quoted).join(" OR ");
+}
+
+export function salientTermsQuery(text) {
+  const counts = new Map();
+  for (const raw of String(text ?? "").match(TERM) ?? []) {
+    const term = raw.toLowerCase();
+    if (term.length < SHORTEST_SALIENT_TERM || STOPWORDS.has(term)) continue;
+    counts.set(term, (counts.get(term) ?? 0) + 1);
+  }
+  if (!counts.size) return null;
+
+  const ranked = [...counts.entries()]
+    .sort(([termA, countA], [termB, countB]) => countB - countA || termA.localeCompare(termB))
+    .slice(0, MOST_REPEATED_TERMS_QUERIED);
+  return ranked.map(([term]) => quoted(term)).join(" OR ");
 }
 
 export function ftsQuery(text) {
@@ -64,9 +80,6 @@ function matchFor(text) {
 
 // --- Search ---
 
-// A session's working directory is often a subdirectory of the project, so the project is
-// the repository that contains it. Without this, an automatic search comes back empty and
-// reads as "nothing recorded" — the silent, plausible failure ADR 0006 exists to remove.
 function theCurrentProject() {
   return process.env.CLAUDE_PROJECT_DIR || repositoryRootAt(process.cwd()) || process.cwd();
 }
@@ -90,6 +103,20 @@ function resolvedPath(path) {
 
 function isAtOrUnder(path, root) {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
+}
+
+export function recordedProjectsUnder(db, path) {
+  const root = resolvedPath(path);
+  const recorded = db
+    .prepare(
+      `select project from prompts where project is not null
+       union select project from sessions where project is not null`
+    )
+    .all()
+    .map((row) => row.project);
+
+  const matching = recorded.filter((value) => isAtOrUnder(resolvedPath(value), root));
+  return matching.length ? matching : [path];
 }
 
 export function createSearch(
@@ -163,8 +190,6 @@ export function createSearch(
     return result;
   }
 
-  // One decision, in one place: what the search is bounded by, the path to record for it,
-  // and whether an automatic search was deliberately widened past the current project.
   function scopeFor({ project, source, allProjects }) {
     const boundedBy = (path) => ({ projects: projectValuesUnder(path), scopedTo: path });
     if (project) return boundedBy(project);
@@ -173,22 +198,8 @@ export function createSearch(
     return boundedBy(currentProject);
   }
 
-  // Every recorded project path at or under this one, so a session started in a
-  // subdirectory still counts, and a sibling that merely shares a prefix does not.
   function projectValuesUnder(path) {
-    const root = resolvedPath(path);
-    const matching = recordedProjects().filter((value) => isAtOrUnder(resolvedPath(value), root));
-    return matching.length ? matching : [path];
-  }
-
-  function recordedProjects() {
-    return db
-      .prepare(
-        `select project from prompts where project is not null
-         union select project from sessions where project is not null`
-      )
-      .all()
-      .map((row) => row.project);
+    return recordedProjectsUnder(db, path);
   }
 
   function factRows(query, filters) {
@@ -285,9 +296,7 @@ export function createSearch(
       mode: "sql",
       rows: rows.length,
       source,
-      // A hand-written statement carries its own where clause, so nothing here can bound it
-      // to a project. An automatic one is logged as unscoped rather than presumed scoped.
-      allProjects: source === CLAUDES_OWN_JUDGEMENT,
+      allProjects: loggedAsUnscoped(source),
     });
     return rows;
   }
@@ -385,7 +394,7 @@ function factBelongsToOneOf(projects) {
   return `exists (
   select 1 from sessions s
   where s.project in (${placeholders(projects)})
-    and ((f.session is not null and s.session_id like f.session || '%')
+    and ((f.session is not null and ${SESSION_STARTS_WITH_THE_FACTS_PREFIX})
       or (f.session is null and s.topic = f.topic)))`;
 }
 
@@ -433,11 +442,13 @@ function promptPlan(match, { projects, since, until, session }) {
   };
 }
 
-// One rule, two audiences: the library knows its own three sources, the command line offers
-// the two a caller may ask for. A typo must not become a third source in the log.
 function checkedSource(value, { allowed, label }) {
   if (allowed.includes(value)) return value;
   throw new Error(`${label} takes ${allowed.join(" or ")}, got ${JSON.stringify(value)}`);
+}
+
+function loggedAsUnscoped(source) {
+  return source === CLAUDES_OWN_JUDGEMENT;
 }
 
 const READ_STATEMENT = /^\s*(?:select|with)\b/i;
@@ -622,8 +633,6 @@ function jsonText(value) {
   return { text: `${JSON.stringify(value, null, 2)}\n` };
 }
 
-// Machine-readable output is read by the same reader as the text, so it carries the
-// contract too. Anything else lets `--json` hand over facts with nothing attached.
 function jsonTextWithAttribution(value) {
   const payload = Array.isArray(value) ? { rows: value } : value;
   return jsonText({ ...payload, attribution: ATTRIBUTION_NOTE });

@@ -16,7 +16,7 @@ test("exposes what extraction recorded without leaking the file's shape", () => 
   const state = createStateStore(config);
 
   assert.equal(state.processedRecord("never-seen"), null);
-  state.markProcessed("seen", { topic: { id: "resume_project" } });
+  state.recordExtraction("seen", { result: { topic: { id: "resume_project" } } });
   assert.equal(state.processedRecord("seen").topic, "resume_project");
 });
 
@@ -24,15 +24,18 @@ test("records processed sessions in the one state file", () => {
   const config = freshConfig();
   const state = createStateStore(config);
 
-  assert.equal(state.isProcessed("abc123"), false);
+  assert.equal(state.processedRecord("abc123"), null);
 
-  state.markProcessed("abc123", {
-    topic: { id: "alcs_broadcast_variants", summary: "one line" },
-    context: ["a"],
-    decisions: ["b", "c"],
+  state.recordExtraction("abc123", {
+    offset: 4096,
+    result: {
+      topic: { id: "alcs_broadcast_variants", summary: "one line" },
+      context: ["a"],
+      decisions: ["b", "c"],
+    },
   });
 
-  assert.equal(state.isProcessed("abc123"), true);
+  assert.ok(state.processedRecord("abc123"));
 
   const record = createStateStore(config).load().processed["abc123"];
   assert.equal(record.topic, "alcs_broadcast_variants");
@@ -48,9 +51,9 @@ test("records a skipped session so it is not retried forever", () => {
   const config = freshConfig();
   const state = createStateStore(config);
 
-  state.markProcessed("nothing", null);
+  state.recordExtraction("nothing");
 
-  assert.equal(state.isProcessed("nothing"), true);
+  assert.ok(state.processedRecord("nothing"));
   assert.equal(state.load().processed["nothing"].topic, null);
 });
 
@@ -101,9 +104,9 @@ test("adopts an existing processed.json once and never writes it again", () => {
   );
 
   const state = createStateStore(config);
-  assert.equal(state.isProcessed("old"), true);
+  assert.ok(state.processedRecord("old"));
 
-  state.markProcessed("new", null);
+  state.recordExtraction("new");
 
   assert.ok(existsSync(config.statePath));
   assert.deepEqual(
@@ -120,6 +123,6 @@ test("survives a corrupt state file rather than throwing", () => {
 
   const state = createStateStore(config);
   assert.deepEqual(state.load().processed, {});
-  state.markProcessed("fresh", null);
-  assert.equal(state.isProcessed("fresh"), true);
+  state.recordExtraction("fresh");
+  assert.ok(state.processedRecord("fresh"));
 });

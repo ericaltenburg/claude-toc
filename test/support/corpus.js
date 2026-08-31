@@ -8,7 +8,7 @@ import { createConfig } from "../../src/config.js";
 export const REPO_ROOT = join(import.meta.dirname, "..", "..");
 export const LOGGER_HOOK = join(REPO_ROOT, "hooks", "toc-logger.mjs");
 export const EXTRACT_HOOK = join(REPO_ROOT, "hooks", "toc-extract.mjs");
-export const EXTRACTOR = join(REPO_ROOT, "src", "extract.js");
+export const EXTRACTOR = join(REPO_ROOT, "bin", "toc-extract");
 
 export function tempCorpus() {
   const root = mkdtempSync(join(tmpdir(), "claude-toc-"));
@@ -29,6 +29,7 @@ export function tempCorpus() {
 export function corpusEnv(config, extra = {}) {
   return {
     ...process.env,
+    CLAUDE_TOC_NODE: process.execPath,
     CLAUDE_TOC_CORPUS_DIR: config.corpusDir,
     CLAUDE_TOC_TRANSCRIPTS_DIR: config.transcriptsDir,
     CLAUDE_TOC_PROMPT_LOG: config.promptLog,
@@ -36,13 +37,17 @@ export function corpusEnv(config, extra = {}) {
   };
 }
 
-export function runNode(script, { input = "", args = [], config, env = {} } = {}) {
-  return spawnSync("node", [script, ...args], {
+export function runCli(command, { input = "", args = [], config, env = {} } = {}) {
+  return spawnSync(command, args, {
     input,
     encoding: "utf-8",
     timeout: 20_000,
     env: corpusEnv(config, env),
   });
+}
+
+export function runNode(script, { args = [], ...options } = {}) {
+  return runCli("node", { ...options, args: [script, ...args] });
 }
 
 export const LATE_ON_26_AUGUST_IN_NEW_YORK = Date.parse("2026-08-27T03:30:00Z");
@@ -74,6 +79,29 @@ export function promptRecord({
   sessionId = "4cc461d6-2d88-4426-966c-ba2081ca75bb",
 } = {}) {
   return { display, pastedContents: {}, timestamp, project, sessionId };
+}
+
+export function transcriptPath(config, sessionId) {
+  return join(config.transcriptsDir, `${sessionId}.jsonl`);
+}
+
+export function appendTranscript(config, sessionId, turns) {
+  const lines = turns.map(transcriptRecord);
+  appendFileSync(transcriptPath(config, sessionId), lines.map((line) => `${line}\n`).join(""));
+  return transcriptPath(config, sessionId);
+}
+
+function transcriptRecord({ role = "user", text }) {
+  const content = role === "user" ? aBareString(text) : textBlocks(text);
+  return JSON.stringify({ type: role, message: { content } });
+}
+
+const aBareString = (text) => text;
+const textBlocks = (text) => [{ type: "text", text }];
+
+export function writeTranscript(config, sessionId, turns) {
+  writeFileSync(transcriptPath(config, sessionId), "");
+  return appendTranscript(config, sessionId, turns);
 }
 
 export function appendSessions(config, records) {

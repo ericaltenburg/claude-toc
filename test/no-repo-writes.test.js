@@ -10,7 +10,9 @@ import { openIndex } from "../src/search-index.js";
 import {
   tempCorpus,
   runNode,
+  runCli,
   sessionPayload,
+  writeTranscript,
   REPO_ROOT,
   LOGGER_HOOK,
   EXTRACT_HOOK,
@@ -46,7 +48,7 @@ test("every write lands in the configured corpus and none in the repository", ()
     "Will store variants in DynamoDB",
     session
   );
-  createStateStore(config).markProcessed(session, null);
+  createStateStore(config).recordExtraction(session);
 
   const index = openIndex(config);
   index.refresh();
@@ -55,8 +57,8 @@ test("every write lands in the configured corpus and none in the repository", ()
   runNode(LOGGER_HOOK, { input: sessionPayload(config), config });
   runNode(EXTRACT_HOOK, { input: sessionPayload(config), config });
   for (const args of [[], ["--dedup"], ["nosuchsession"]]) {
-    const result = runNode(EXTRACTOR, { args, config });
-    assert.equal(result.stderr, "", `node src/extract.js ${args.join(" ")}`);
+    const result = runCli(EXTRACTOR, { args, config });
+    assert.equal(result.stderr, "", `toc-extract ${args.join(" ")}`);
   }
 
   assert.ok(existsSync(join(config.topicsDir, "alcs_broadcast_variants.md")));
@@ -73,8 +75,14 @@ test("the extractor lists sessions without writing anything", () => {
   const config = tempCorpus();
   const before = repoStatus();
 
-  runNode(LOGGER_HOOK, { input: sessionPayload(config), config });
-  const listing = runNode(EXTRACTOR, { args: [], config });
+  const transcript = writeTranscript(config, "aaaaaaaa-1111-2222-3333-444455556666", [
+    { role: "user", text: "what did we decide about broadcast variants?" },
+  ]);
+  runNode(LOGGER_HOOK, {
+    input: sessionPayload(config, { transcript_path: transcript }),
+    config,
+  });
+  const listing = runCli(EXTRACTOR, { args: [], config });
 
   assert.equal(listing.status, 0);
   assert.match(listing.stdout, /1 total, 1 unextracted/);

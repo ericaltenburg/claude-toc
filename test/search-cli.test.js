@@ -13,10 +13,8 @@ const FACTS = {
   Decisions: ["- Will store variants in DynamoDB [session:316972f2, 2026-05-12]"],
 };
 
-const NODE_WITH_BUILTIN_SQLITE = process.execPath;
-
 function run(config, args, { cwd, env = {} } = {}) {
-  const environment = corpusEnv(config, { CLAUDE_TOC_NODE: NODE_WITH_BUILTIN_SQLITE, ...env });
+  const environment = corpusEnv(config, env);
   if (!("CLAUDE_PROJECT_DIR" in env)) delete environment.CLAUDE_PROJECT_DIR;
   return spawnSync(CLI, args, { cwd, encoding: "utf-8", timeout: 20_000, env: environment });
 }

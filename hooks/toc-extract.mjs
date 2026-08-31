@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import { createConfig } from "../src/config.js";
 import { createStateStore } from "../src/state.js";
 
-const EXTRACTOR = fileURLToPath(new URL("../src/extract.js", import.meta.url));
+const EXTRACTOR = fileURLToPath(new URL("../bin/toc-extract", import.meta.url));
 const STDIN_TIMEOUT_MS = 5000;
 
 let input = "";
@@ -31,7 +31,7 @@ function triggerExtraction(data) {
   const state = createStateStore(config);
   if (!state.acquireExtraction(data.session_id)) return;
 
-  const child = spawn("node", [EXTRACTOR, data.session_id.slice(0, 8)], {
+  const child = spawn(EXTRACTOR, [data.session_id.slice(0, 8)], {
     detached: true,
     stdio: "ignore",
     env: {
