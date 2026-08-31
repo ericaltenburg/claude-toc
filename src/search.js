@@ -10,7 +10,6 @@ import { createStateStore } from "./state.js";
 export const FACT_LIMIT = 20;
 export const PROMPT_LIMIT = 10;
 
-// See docs/adr/0006 for why the source of a search also decides its project scope.
 const CLAUDES_OWN_JUDGEMENT = "automatic";
 const SOURCES_A_CALLER_MAY_ASK_FOR = [CLAUDES_OWN_JUDGEMENT, "explicit"];
 const SOURCES = [...SOURCES_A_CALLER_MAY_ASK_FOR, "smoke"];
@@ -81,9 +80,6 @@ function matchFor(text) {
 
 // --- Search ---
 
-// A session's working directory is often a subdirectory of the project, so the project is
-// the repository that contains it. Without this, an automatic search comes back empty and
-// reads as "nothing recorded" — the silent, plausible failure ADR 0006 exists to remove.
 function theCurrentProject() {
   return process.env.CLAUDE_PROJECT_DIR || repositoryRootAt(process.cwd()) || process.cwd();
 }
@@ -194,8 +190,6 @@ export function createSearch(
     return result;
   }
 
-  // One decision, in one place: what the search is bounded by, the path to record for it,
-  // and whether an automatic search was deliberately widened past the current project.
   function scopeFor({ project, source, allProjects }) {
     const boundedBy = (path) => ({ projects: projectValuesUnder(path), scopedTo: path });
     if (project) return boundedBy(project);
@@ -302,9 +296,7 @@ export function createSearch(
       mode: "sql",
       rows: rows.length,
       source,
-      // A hand-written statement carries its own where clause, so nothing here can bound it
-      // to a project. An automatic one is logged as unscoped rather than presumed scoped.
-      allProjects: source === CLAUDES_OWN_JUDGEMENT,
+      allProjects: aHandWrittenStatementIsNeverScopedForTheCaller(source),
     });
     return rows;
   }
@@ -450,11 +442,13 @@ function promptPlan(match, { projects, since, until, session }) {
   };
 }
 
-// One rule, two audiences: the library knows its own three sources, the command line offers
-// the two a caller may ask for. A typo must not become a third source in the log.
 function checkedSource(value, { allowed, label }) {
   if (allowed.includes(value)) return value;
   throw new Error(`${label} takes ${allowed.join(" or ")}, got ${JSON.stringify(value)}`);
+}
+
+function aHandWrittenStatementIsNeverScopedForTheCaller(source) {
+  return source === CLAUDES_OWN_JUDGEMENT;
 }
 
 const READ_STATEMENT = /^\s*(?:select|with)\b/i;
@@ -639,8 +633,6 @@ function jsonText(value) {
   return { text: `${JSON.stringify(value, null, 2)}\n` };
 }
 
-// Machine-readable output is read by the same reader as the text, so it carries the
-// contract too. Anything else lets `--json` hand over facts with nothing attached.
 function jsonTextWithAttribution(value) {
   const payload = Array.isArray(value) ? { rows: value } : value;
   return jsonText({ ...payload, attribution: ATTRIBUTION_NOTE });
