@@ -19,6 +19,12 @@ rebuildable from markdown at any time, so it remains safe to delete. But it is n
 longer *optional*: the write path depends on it, which is why one refresh function
 is called by both the sweeper and the read path rather than only by search.
 
+**A topic's candidate score is its best-matching fact, not the sum of its facts.** Topic size
+is lumpy (see ADR 0003), so a summed score would make the largest topics candidates for every
+conversation regardless of subject. Same-project topics are boosted by a constant factor on
+top of that score, which decides between comparable topics without letting an unrelated
+same-project topic outrank a real match.
+
 A stale index during a sweep causes duplicate topics — the sweeper cannot see a
 topic created an hour ago — which is why refresh happens before candidate selection
 and not on a schedule.

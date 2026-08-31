@@ -2,15 +2,22 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "
 
 const STATE_VERSION = 1;
 const EXTRACTION_LEASE_MS = 300_000;
+export const ATTEMPTS_BEFORE_QUARANTINE = 3;
+const START_OF_TRANSCRIPT = 0;
 
 const EMPTY = () => ({
   version: STATE_VERSION,
   processed: {},
+  offsets: {},
+  failures: {},
   quarantined: {},
   extraction: null,
 });
 
-export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {}) {
+export function createStateStore(
+  config,
+  { leaseMs = EXTRACTION_LEASE_MS, attemptsBeforeQuarantine = ATTEMPTS_BEFORE_QUARANTINE } = {}
+) {
   let owned = null;
 
   function load() {
@@ -20,6 +27,8 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
         return {
           version: state.version ?? STATE_VERSION,
           processed: state.processed ?? {},
+          offsets: state.offsets ?? {},
+          failures: state.failures ?? {},
           quarantined: state.quarantined ?? {},
           extraction: state.extraction ?? null,
         };
@@ -56,16 +65,51 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
     return load().processed[sessionId] ?? null;
   }
 
-  function markProcessed(sessionId, result) {
-    const state = load();
-    state.processed[sessionId] = {
+  function processedEntry(result) {
+    return {
       ts: new Date().toISOString(),
       topic: result?.topic?.id ?? null,
       summary: result?.topic?.summary ?? null,
       context: result?.context?.length ?? 0,
       decisions: result?.decisions?.length ?? 0,
     };
+  }
+
+  // The offset is how much of a transcript extraction has already paid for, so it lives with
+  // the corpus rather than in the index, which is derived and safe to delete at any time.
+  function extractionOffset(sessionId) {
+    const offset = load().offsets[sessionId];
+    return Number.isInteger(offset) && offset >= 0 ? offset : START_OF_TRANSCRIPT;
+  }
+
+  // Called only once the facts are on disk: an offset advanced before the write would turn a
+  // crash mid-extraction into a slice nobody will ever read again.
+  function recordExtraction(sessionId, { offset, result = null } = {}) {
+    const state = load();
+    if (Number.isInteger(offset)) state.offsets[sessionId] = offset;
+    delete state.failures[sessionId];
+    state.processed[sessionId] = processedEntry(result);
     save(state);
+  }
+
+  function recordFailure(sessionId, error) {
+    const state = load();
+    const attempts = (state.failures[sessionId]?.attempts ?? 0) + 1;
+    const record = { attempts, ts: new Date().toISOString(), error: String(error ?? "") };
+
+    if (attempts >= attemptsBeforeQuarantine) {
+      delete state.failures[sessionId];
+      state.quarantined[sessionId] = record;
+    } else {
+      state.failures[sessionId] = record;
+    }
+
+    save(state);
+    return { attempts, quarantined: attempts >= attemptsBeforeQuarantine };
+  }
+
+  function isQuarantined(sessionId) {
+    return Boolean(load().quarantined[sessionId]);
   }
 
   function acquireExtraction(sessionId) {
@@ -95,7 +139,10 @@ export function createStateStore(config, { leaseMs = EXTRACTION_LEASE_MS } = {})
     load,
     isProcessed,
     processedRecord,
-    markProcessed,
+    extractionOffset,
+    recordExtraction,
+    recordFailure,
+    isQuarantined,
     acquireExtraction,
     releaseExtraction,
   };

@@ -407,8 +407,8 @@ test("records when a session was extracted and which topic it fed", () => {
         started: "2026-04-24T04:29:00Z",
       },
     ]);
-    createStateStore(config).markProcessed("14f63e34-0576-408d-b1ed-1c85e704c1f3", {
-      topic: { id: "broadcast_variants" },
+    createStateStore(config).recordExtraction("14f63e34-0576-408d-b1ed-1c85e704c1f3", {
+      result: { topic: { id: "broadcast_variants" } },
     });
 
     index.refresh();

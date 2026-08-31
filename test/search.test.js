@@ -452,8 +452,8 @@ test("a fact carrying no session id stays visible to its topic's project", () =>
         started: "2026-04-24T04:29:00Z",
       },
     ]);
-    createStateStore(config).markProcessed("14f63e34-0576-408d-b1ed-1c85e704c1f3", {
-      topic: { id: "alarm_tuning" },
+    createStateStore(config).recordExtraction("14f63e34-0576-408d-b1ed-1c85e704c1f3", {
+      result: { topic: { id: "alarm_tuning" } },
     });
 
     const scoped = search.search({ query: "alarm", mode: "facts", project: "/work/aldis" });
