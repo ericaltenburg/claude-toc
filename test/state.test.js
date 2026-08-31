@@ -24,7 +24,7 @@ test("records processed sessions in the one state file", () => {
   const config = freshConfig();
   const state = createStateStore(config);
 
-  assert.equal(state.isProcessed("abc123"), false);
+  assert.equal(state.processedRecord("abc123"), null);
 
   state.recordExtraction("abc123", {
     offset: 4096,
@@ -35,7 +35,7 @@ test("records processed sessions in the one state file", () => {
     },
   });
 
-  assert.equal(state.isProcessed("abc123"), true);
+  assert.ok(state.processedRecord("abc123"));
 
   const record = createStateStore(config).load().processed["abc123"];
   assert.equal(record.topic, "alcs_broadcast_variants");
@@ -53,7 +53,7 @@ test("records a skipped session so it is not retried forever", () => {
 
   state.recordExtraction("nothing");
 
-  assert.equal(state.isProcessed("nothing"), true);
+  assert.ok(state.processedRecord("nothing"));
   assert.equal(state.load().processed["nothing"].topic, null);
 });
 
@@ -104,7 +104,7 @@ test("adopts an existing processed.json once and never writes it again", () => {
   );
 
   const state = createStateStore(config);
-  assert.equal(state.isProcessed("old"), true);
+  assert.ok(state.processedRecord("old"));
 
   state.recordExtraction("new");
 
@@ -124,5 +124,5 @@ test("survives a corrupt state file rather than throwing", () => {
   const state = createStateStore(config);
   assert.deepEqual(state.load().processed, {});
   state.recordExtraction("fresh");
-  assert.equal(state.isProcessed("fresh"), true);
+  assert.ok(state.processedRecord("fresh"));
 });

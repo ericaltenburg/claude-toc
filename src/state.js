@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "
 const STATE_VERSION = 1;
 const EXTRACTION_LEASE_MS = 300_000;
 export const ATTEMPTS_BEFORE_QUARANTINE = 3;
-const START_OF_TRANSCRIPT = 0;
+export const START_OF_TRANSCRIPT = 0;
 
 const EMPTY = () => ({
   version: STATE_VERSION,
@@ -57,10 +57,6 @@ export function createStateStore(
     renameSync(tmp, config.statePath);
   }
 
-  function isProcessed(sessionId) {
-    return Boolean(load().processed[sessionId]);
-  }
-
   function processedRecord(sessionId) {
     return load().processed[sessionId] ?? null;
   }
@@ -69,6 +65,7 @@ export function createStateStore(
     return {
       ts: new Date().toISOString(),
       topic: result?.topic?.id ?? null,
+      topics: result?.topics ?? (result?.topic?.id ? [result.topic.id] : []),
       summary: result?.topic?.summary ?? null,
       context: result?.context?.length ?? 0,
       decisions: result?.decisions?.length ?? 0,
@@ -133,7 +130,6 @@ export function createStateStore(
 
   return {
     load,
-    isProcessed,
     processedRecord,
     extractionOffset,
     recordExtraction,

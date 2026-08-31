@@ -12,9 +12,9 @@ import {
 import { pathToFileURL } from "node:url";
 
 import { createConfig } from "./config.js";
-import { openIndex } from "./search-index.js";
+import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { recordedProjectsUnder, salientTermsQuery } from "./search.js";
-import { createStateStore } from "./state.js";
+import { createStateStore, START_OF_TRANSCRIPT } from "./state.js";
 import { createTopicStore } from "./toc.js";
 
 export const CANDIDATE_TOPICS_IN_A_PROMPT = 10;
@@ -34,13 +34,9 @@ const MODEL_OUTPUT_LIMIT = 2 * 1024 * 1024;
 const SHORTEST_MEANINGFUL_TURN = 5;
 const TURNS_WORTH_EXTRACTING = 2;
 
-const SESSION_STARTS_WITH_THE_FACTS_PREFIX =
-  "substr(s.session_id, 1, length(f.session)) = f.session";
-
 // --- The transcript slice ---
 
 const NEWLINE = 0x0a;
-const START_OF_TRANSCRIPT = 0;
 
 export function unreadSlice(transcriptPath, offset) {
   const fd = openSync(transcriptPath, "r");
@@ -301,10 +297,7 @@ export function createExtractor(
       return outcome("nothing-to-extract", { sessionId, offset: slice.offset });
     }
 
-    const { candidates, knownFacts } = boundedContextForAFreshlyIndexedCorpus(
-      slice.text,
-      project
-    );
+    const { candidates, knownFacts } = promptContextFromAFreshIndex(slice.text, project);
     const prompt = buildExtractPrompt({ candidates, knownFacts });
     const chunks = chunkTurns(turns, maxChunkChars);
 
@@ -330,10 +323,13 @@ export function createExtractor(
 
     const written = extracted.map((merged) => ({
       ...merged,
-      topic: { ...merged.topic, id: appendedToTheCorpus(merged, sessionId, candidates) },
+      topic: { ...merged.topic, id: appendToCorpus(merged, sessionId, candidates) },
     }));
 
-    state.recordExtraction(sessionId, { offset: slice.offset, result: written[0] });
+    state.recordExtraction(sessionId, {
+      offset: slice.offset,
+      result: everythingWritten(written),
+    });
 
     return outcome("extracted", {
       sessionId,
@@ -362,7 +358,7 @@ export function createExtractor(
     throw lastError;
   }
 
-  function boundedContextForAFreshlyIndexedCorpus(text, project) {
+  function promptContextFromAFreshIndex(text, project) {
     index.refresh();
 
     const match = salientTermsQuery(text);
@@ -440,7 +436,7 @@ export function createExtractor(
     return new Set(rows.map((row) => row.topic));
   }
 
-  function appendedToTheCorpus(merged, sessionId, candidates) {
+  function appendToCorpus(merged, sessionId, candidates) {
     const topicId = resolveTopicId(merged.topic.id, candidates);
 
     topics.upsertTopic(topicId, {
@@ -459,15 +455,17 @@ export function createExtractor(
 
   function resolveTopicId(returned, candidates) {
     const normalized = normalizedTopicId(returned);
-    const candidate = candidates.find(
-      (entry) => normalizedTopicId(entry.topic) === normalized
-    );
+    const sameSubject = (id) => normalizedTopicId(id) === normalized;
+
+    const candidate = candidates.find((entry) => sameSubject(entry.topic));
     if (candidate) return candidate.topic;
 
     const existing = db
-      .prepare("select id from topics where lower(id) = ?")
-      .get(normalized);
-    return existing?.id ?? normalized;
+      .prepare("select id from topics")
+      .all()
+      .map((row) => row.id)
+      .find(sameSubject);
+    return existing ?? normalized;
   }
 
   return { extractSession, index, refresh: () => index.refresh(), close: () => index.close() };
@@ -478,6 +476,15 @@ function normalizedTopicId(id) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
+}
+
+function everythingWritten(written) {
+  return {
+    topic: written[0].topic,
+    topics: written.map((merged) => merged.topic.id),
+    context: written.flatMap((merged) => merged.context),
+    decisions: written.flatMap((merged) => merged.decisions),
+  };
 }
 
 function outcome(status, extra = {}) {
@@ -548,7 +555,7 @@ function reportExtraction(session, result) {
   console.log(`  ${result.status}`);
 }
 
-function withUnreadTranscript(sessions, state) {
+function sessionsWithUnreadTranscript(sessions, state) {
   return sessions.filter((session) => hasUnreadTranscript(session, state));
 }
 
@@ -559,7 +566,7 @@ function hasUnreadTranscript(session, state) {
 }
 
 function listSessions(sessions, state) {
-  const unread = withUnreadTranscript(sessions, state);
+  const unread = sessionsWithUnreadTranscript(sessions, state);
   console.log(`Sessions: ${sessions.length} total, ${unread.length} unextracted`);
 
   for (const session of sessions) {
@@ -603,7 +610,7 @@ function main(argv) {
 
   const chosen =
     arg === "--all"
-      ? withUnreadTranscript(sessions, state)
+      ? sessionsWithUnreadTranscript(sessions, state)
       : sessions.filter((session) => String(session.session_id).startsWith(arg));
 
   if (!chosen.length) {

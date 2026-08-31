@@ -440,6 +440,30 @@ test("facts are scoped by the project of the session that produced them", () => 
   });
 });
 
+test("an underscore in a fact's session id does not widen the project join", () => {
+  withSearch((config, search) => {
+    writeTopic(config, "broadcast_variants", {
+      Context: ["- Variants are keyed by show id [session:abc_defg, 2026-05-12]"],
+    });
+    appendSessions(config, [
+      {
+        session_id: "abcXdefg-1111-2222-3333-444455556666",
+        transcript: "/t/abcXdefg.jsonl",
+        cwd: "/work/alcs",
+        started: "2026-05-12T04:29:00Z",
+      },
+    ]);
+
+    const scoped = search.search({ query: "variants", mode: "facts", project: "/work/alcs" });
+
+    assert.deepEqual(
+      scoped.facts.rows,
+      [],
+      "under LIKE the underscore is a wildcard, so this fact joins a session it never came from"
+    );
+  });
+});
+
 test("a fact carrying no session id stays visible to its topic's project", () => {
   withSearch((config, search) => {
     writeTopic(config, "alarm_tuning", { Context: [FACT_WITHOUT_A_SESSION_ID] });

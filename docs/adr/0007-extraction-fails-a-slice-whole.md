@@ -42,7 +42,9 @@ correct.
 
 **Facts go to the topic their own chunk named**, not to a majority vote across
 chunks. A long session genuinely turns to another subject, and filing those facts
-under the chunk-majority topic would silently misattribute them.
+under the chunk-majority topic would silently misattribute them. The state file
+records every topic a slice wrote, so a multi-topic slice is not under-reported as
+one topic.
 
 **A session is a candidate for extraction while any of its transcript is unread**,
 which is not the same as never having been extracted: a session extracted an hour
@@ -60,7 +62,9 @@ topics, are ranked (ADR 0003).
 
 - Peak memory holds every chunk's facts for one slice. At the measured slice sizes
   this is kilobytes, so it is not worth streaming.
-- A permanently malformed transcript costs three model calls before quarantine, not
-  three plus three escalations.
+- A slice that always fails costs three attempts before quarantine, and an attempt costs
+  one model call per chunk — two if the chunk is escalated. So a single-chunk slice whose
+  output is always malformed costs three calls, while a ten-chunk slice the model cannot
+  take at all costs up to sixty.
 - The offset is authoritative state and lives in the state file with the corpus,
   never only in the derived index, which is safe to delete at any time.

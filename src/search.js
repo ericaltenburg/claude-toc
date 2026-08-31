@@ -4,7 +4,7 @@ import { dirname, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createConfig } from "./config.js";
-import { openIndex } from "./search-index.js";
+import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { createStateStore } from "./state.js";
 
 export const FACT_LIMIT = 20;
@@ -296,7 +296,7 @@ export function createSearch(
       mode: "sql",
       rows: rows.length,
       source,
-      allProjects: aHandWrittenStatementIsNeverScopedForTheCaller(source),
+      allProjects: loggedAsUnscoped(source),
     });
     return rows;
   }
@@ -394,7 +394,7 @@ function factBelongsToOneOf(projects) {
   return `exists (
   select 1 from sessions s
   where s.project in (${placeholders(projects)})
-    and ((f.session is not null and s.session_id like f.session || '%')
+    and ((f.session is not null and ${SESSION_STARTS_WITH_THE_FACTS_PREFIX})
       or (f.session is null and s.topic = f.topic)))`;
 }
 
@@ -447,7 +447,7 @@ function checkedSource(value, { allowed, label }) {
   throw new Error(`${label} takes ${allowed.join(" or ")}, got ${JSON.stringify(value)}`);
 }
 
-function aHandWrittenStatementIsNeverScopedForTheCaller(source) {
+function loggedAsUnscoped(source) {
   return source === CLAUDES_OWN_JUDGEMENT;
 }
 

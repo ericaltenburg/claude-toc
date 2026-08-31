@@ -459,6 +459,73 @@ function writeTopicTheOpenIndexHasNeverSeen(config) {
   });
 }
 
+test("a topic id whose stored spelling uses another separator still reuses the file", () => {
+  const config = tempCorpus();
+  writeTopic(config, "alcs-broadcast-variants", {
+    Context: ["- Broadcast variants live in dynamodb for the alcs pipeline [session:aaaaaaaa, 2026-05-12]"],
+  });
+  writeTranscript(config, SESSION, CONVERSATION);
+  appendSessions(config, [sessionIn(config)]);
+
+  const model = stubModel([
+    { ...MODEL_OUTPUT, topic: { ...MODEL_OUTPUT.topic, id: "alcs_broadcast_variants" } },
+  ]);
+  const extractor = extractorFor(config, model, { candidateLimit: 0 });
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.equal(result.topic, "alcs-broadcast-variants");
+  assert.deepEqual(
+    readdirSync(config.topicsDir),
+    ["alcs-broadcast-variants.md"],
+    "normalising only the returned id forks a second file for one subject"
+  );
+});
+
+test("a chunk no model can take fails after both were tried", () => {
+  const config = corpusWithOneTopic();
+  const model = stubModel(() => new Error("context window exceeded"));
+  const extractor = extractorFor(config, model);
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.equal(result.status, "failed");
+  assert.deepEqual(
+    model.calls.map((call) => call.model),
+    ["global.anthropic.claude-sonnet-5", "global.anthropic.claude-opus-5"],
+    "the larger model is the fallback for a chunk the extraction model cannot take"
+  );
+  assert.match(result.error, /context window exceeded/);
+});
+
+test("every topic a slice wrote is recorded, not just the first", () => {
+  const config = corpusWithOneTopic();
+  appendTranscript(config, SESSION, [
+    { role: "user", text: `then we moved on to the ingest lambda: ${"x".repeat(400)}` },
+    { role: "assistant", text: `the ingest lambda retries three times: ${"y".repeat(400)}` },
+  ]);
+
+  const model = stubModel((_call, index) =>
+    index === 0
+      ? MODEL_OUTPUT
+      : {
+          topic: { id: "ingest_lambda", keywords: ["ingest"], summary: "the ingest lambda" },
+          context: ["The ingest lambda retries three times"],
+          decisions: [],
+        }
+  );
+  const extractor = extractorFor(config, model, { maxChunkChars: 400 });
+  extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  const record = createStateStore(config).processedRecord(SESSION);
+  assert.deepEqual([...record.topics].sort(), ["alcs_broadcast_variants", "ingest_lambda"]);
+  assert.equal(record.context, 2);
+  assert.equal(record.decisions, 1);
+});
+
 test("a topic id that differs only in shape reuses the existing file", () => {
   const config = corpusWithOneTopic();
   const model = stubModel([

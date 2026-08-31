@@ -32,7 +32,10 @@ No `LIKE` against corpus-derived strings.
   JavaScript, path segment aware, so a sibling sharing a prefix does not match
   (`recordedProjectsUnder` in `search.js`).
 - Session prefixes are matched with `substr(s.session_id, 1, length(f.session)) =
-  f.session`, which is plain equality on a computed prefix.
+  f.session`, which is plain equality on a computed prefix. That predicate is one
+  exported constant, `SESSION_STARTS_WITH_THE_FACTS_PREFIX` in `search-index.js`,
+  which owns both tables — the read path and the extractor had drifted into two
+  spellings of the same join, and only one of them had been fixed.
 
 ## Consequences
 
