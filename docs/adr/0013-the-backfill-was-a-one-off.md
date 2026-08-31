@@ -55,6 +55,27 @@ projects would have left most of the corpus invisible to the search that matters
 That is why the session index now has one module owning its record shape, reading and
 writing, rather than the hook spelling it out inline.
 
+## What the run got wrong, and the repair
+
+The backfill dated every fact it wrote 2026-08-31, because a fact's date was the clock at
+append time rather than anything about the conversation. 1,163 facts were stamped with the
+run date, 999 of them off by four days or more and 33 by over 45 days, all in the direction
+that makes a stale fact look current.
+
+The cause is fixed upstream: a fact is now dated from the last record in the slice it came
+from. The damage was repaired by a one-off script, also not kept, which rewrote **1,097
+fact lines** in place. Dates came from the transcript's own last timestamp for 68 sessions
+and from the prompt log's last prompt for the 11 whose transcripts had rotated away; 66
+facts were correctly dated today already and nothing was unresolvable, because no
+8-character session prefix in this corpus is ambiguous.
+
+Two rules kept the repair honest. Only lines carrying the run's own date were touched:
+facts written before it were appended slice by slice, close to their own turns, so
+re-dating them from a session's span would have dragged an early slice forward to the
+session's last day. And the rewrite refused to write any file where anything other than a
+date had changed. Fact count before and after: 2,996. `topics.before-redate/` in the corpus
+is the snapshot taken first, and can be deleted once the dates look right.
+
 ## Consequences
 
 - Coverage is current rather than a 17% sample, and staying current is now the sweep
