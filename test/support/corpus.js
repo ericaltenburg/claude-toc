@@ -29,7 +29,6 @@ export function tempCorpus() {
 export function corpusEnv(config, extra = {}) {
   return {
     ...process.env,
-    // The node on PATH may predate built-in sqlite; the one running the tests does not.
     CLAUDE_TOC_NODE: process.execPath,
     CLAUDE_TOC_CORPUS_DIR: config.corpusDir,
     CLAUDE_TOC_TRANSCRIPTS_DIR: config.transcriptsDir,
@@ -38,7 +37,6 @@ export function corpusEnv(config, extra = {}) {
   };
 }
 
-// A command that resolves node itself, as the hooks and the shipped wrappers do.
 export function runCli(command, { input = "", args = [], config, env = {} } = {}) {
   return spawnSync(command, args, {
     input,
@@ -87,17 +85,19 @@ export function transcriptPath(config, sessionId) {
   return join(config.transcriptsDir, `${sessionId}.jsonl`);
 }
 
-// Claude Code's transcript shape: a user turn is a bare string, an assistant turn is blocks.
 export function appendTranscript(config, sessionId, turns) {
-  const lines = turns.map(({ role = "user", text }) =>
-    JSON.stringify({
-      type: role,
-      message: { content: role === "user" ? text : [{ type: "text", text }] },
-    })
-  );
+  const lines = turns.map(transcriptRecord);
   appendFileSync(transcriptPath(config, sessionId), lines.map((line) => `${line}\n`).join(""));
   return transcriptPath(config, sessionId);
 }
+
+function transcriptRecord({ role = "user", text }) {
+  const content = role === "user" ? aBareString(text) : textBlocks(text);
+  return JSON.stringify({ type: role, message: { content } });
+}
+
+const aBareString = (text) => text;
+const textBlocks = (text) => [{ type: "text", text }];
 
 export function writeTranscript(config, sessionId, turns) {
   writeFileSync(transcriptPath(config, sessionId), "");

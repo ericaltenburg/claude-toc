@@ -62,7 +62,6 @@ function sessionIn(config, overrides = {}) {
   return session({ transcript: transcriptPath(config, overrides.session_id ?? SESSION), ...overrides });
 }
 
-// Seam 2: every test drives extraction through this, so none spends money.
 function stubModel(replies) {
   const calls = [];
   const answer = typeof replies === "function" ? replies : () => replies[calls.length - 1];
@@ -137,9 +136,6 @@ test("candidate topics come from a full-text query, capped at ten", () => {
   assert.ok(!prompt.includes("unrelated_kitchen_sink"), "a topic matching nothing is not a candidate");
 });
 
-// Two topics matching the conversation equally well, so the project is the only thing that
-// can separate them — and the same-project one is deliberately last alphabetically, which is
-// how a tie breaks when nothing boosts it.
 function twoEquallyMatchingTopics(sameProjectAs) {
   const config = tempCorpus();
   const fact = "Broadcast variants for the alcs pipeline live in dynamodb";
@@ -173,14 +169,22 @@ function topCandidate(config) {
 test("a topic from the current project is scored above an equally matching one elsewhere", () => {
   const nearby = topCandidate(twoEquallyMatchingTopics(PROJECT));
 
-  assert.equal(nearby.topic, "zzz_variants_here");
+  assert.equal(
+    nearby.topic,
+    "zzz_variants_here",
+    "the project must outweigh the alphabetical tie-break these two otherwise fall to"
+  );
   assert.equal(nearby.sameProject, true);
 });
 
 test("with neither topic in the current project, the project boost decides nothing", () => {
   const neither = topCandidate(twoEquallyMatchingTopics("/work/somewhere-else-entirely"));
 
-  assert.equal(neither.topic, "aaa_variants_elsewhere");
+  assert.equal(
+    neither.topic,
+    "aaa_variants_elsewhere",
+    "with no boost to apply, equally matching topics fall to the alphabetical tie-break"
+  );
   assert.equal(neither.sameProject, false);
 });
 
@@ -436,10 +440,7 @@ test("a topic created after the index was opened is a candidate rather than a du
   const model = stubModel([MODEL_OUTPUT]);
   const extractor = extractorFor(config, model);
 
-  // The extractor's index is now open and knows nothing of this topic.
-  writeTopic(config, "alcs_variant_pipeline", {
-    Context: ["- The alcs pipeline reads broadcast variants from dynamodb [session:cccccccc, 2026-08-30]"],
-  });
+  writeTopicTheOpenIndexHasNeverSeen(config);
 
   const result = extractor.extractSession(sessionIn(config));
   extractor.close();
@@ -449,6 +450,14 @@ test("a topic created after the index was opened is a candidate rather than a du
     result.candidates.map((candidate) => candidate.topic).join(", ")
   );
 });
+
+function writeTopicTheOpenIndexHasNeverSeen(config) {
+  writeTopic(config, "alcs_variant_pipeline", {
+    Context: [
+      "- The alcs pipeline reads broadcast variants from dynamodb [session:cccccccc, 2026-08-30]",
+    ],
+  });
+}
 
 test("a topic id that differs only in shape reuses the existing file", () => {
   const config = corpusWithOneTopic();

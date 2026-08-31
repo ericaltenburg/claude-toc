@@ -29,6 +29,11 @@ dropped from the test matrix.
 
 ## Consequences
 
+- Tests and the shipped `bin/` wrappers must run the interpreter deliberately rather than
+  whatever `node` resolves to: a machine with an older `node` first on `PATH` fails at
+  `import "node:sqlite"`, which is why the wrappers honour `CLAUDE_TOC_NODE` and the test
+  helpers set it to the interpreter running the suite.
+
 - The zero-dependency property survives; the index needs no install step.
 - Node 20 no longer runs this project. It reaches end of life in April 2026, which
   is behind us, so this costs nothing real.

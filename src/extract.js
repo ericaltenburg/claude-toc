@@ -17,39 +17,36 @@ import { recordedProjectsUnder, salientTermsQuery } from "./search.js";
 import { createStateStore } from "./state.js";
 import { createTopicStore } from "./toc.js";
 
-// See docs/adr/0002: the prompt is bounded by these two caps, not by the corpus.
-export const CANDIDATE_TOPICS = 10;
-export const KNOWN_FACTS = 20;
+export const CANDIDATE_TOPICS_IN_A_PROMPT = 10;
+export const KNOWN_FACTS_IN_A_PROMPT = 20;
 
-// The facts scanned to build the candidate list. Bounded, and generous enough that a
-// same-project topic outside the top ten can still be promoted into it by the boost.
-const RANKED_FACTS_SCANNED = 200;
+const FACTS_SCANNED_FOR_CANDIDATES = 200;
 const SAME_PROJECT_BOOST = 2;
+const CHARS_PER_MODEL_CALL = 300_000;
 
-// ~75K tokens of conversation per call, comfortably inside the extraction model's window.
-const CHUNK_CHARS = 300_000;
-
-// Sonnet 5 for every extraction, with the larger model as the fallback for a chunk it
-// cannot take. Tried in order.
-const MODELS = ["global.anthropic.claude-sonnet-5", "global.anthropic.claude-opus-5"];
+const EXTRACTION_MODEL_THEN_FALLBACK = [
+  "global.anthropic.claude-sonnet-5",
+  "global.anthropic.claude-opus-5",
+];
 const MODEL_TIMEOUT_MS = 120_000;
 const MODEL_OUTPUT_LIMIT = 2 * 1024 * 1024;
 
 const SHORTEST_MEANINGFUL_TURN = 5;
 const TURNS_WORTH_EXTRACTING = 2;
 
+const SESSION_STARTS_WITH_THE_FACTS_PREFIX =
+  "substr(s.session_id, 1, length(f.session)) = f.session";
+
 // --- The transcript slice ---
 
 const NEWLINE = 0x0a;
 const START_OF_TRANSCRIPT = 0;
 
-// The unread slice: bytes past the offset extraction already paid for. A transcript that
-// shrank was rotated under us, so the only honest offset is the start of the file.
 export function unreadSlice(transcriptPath, offset) {
   const fd = openSync(transcriptPath, "r");
   try {
     const { size } = fstatSync(fd);
-    const from = offset > size ? START_OF_TRANSCRIPT : offset;
+    const from = transcriptWasRotated(size, offset) ? START_OF_TRANSCRIPT : offset;
     const nothingUnread = { turns: [], text: "", offset: from };
     if (from >= size) return nothingUnread;
 
@@ -65,6 +62,10 @@ export function unreadSlice(transcriptPath, offset) {
   } finally {
     closeSync(fd);
   }
+}
+
+function transcriptWasRotated(size, offset) {
+  return offset > size;
 }
 
 function turnsFrom(jsonLines) {
@@ -114,8 +115,6 @@ function turnsToText(turns) {
   return turns.map(renderTurn).join("\n\n");
 }
 
-// A slice can exceed the context window, so it goes to the model in pieces. Turn
-// boundaries first; a single turn bigger than the budget is split where it must be.
 export function chunkTurns(turns, maxChars) {
   const chunks = [];
   let current = [];
@@ -133,9 +132,7 @@ export function chunkTurns(turns, maxChars) {
 
     if (piece.length > maxChars) {
       flush();
-      for (let at = 0; at < piece.length; at += maxChars) {
-        chunks.push(piece.slice(at, at + maxChars));
-      }
+      chunks.push(...splitOversizedTurn(piece, maxChars));
       continue;
     }
 
@@ -145,6 +142,14 @@ export function chunkTurns(turns, maxChars) {
   flush();
 
   return chunks;
+}
+
+function splitOversizedTurn(piece, maxChars) {
+  const pieces = [];
+  for (let at = 0; at < piece.length; at += maxChars) {
+    pieces.push(piece.slice(at, at + maxChars));
+  }
+  return pieces;
 }
 
 // --- The prompt ---
@@ -198,7 +203,6 @@ export function buildExtractPrompt({ candidates = [], knownFacts = [] } = {}) {
 
 // --- The model call ---
 
-// The one injectable model call: tests substitute this and nothing else about extraction.
 function callClaude({ prompt, model }) {
   return execFileSync("claude", ["-p"], {
     input: prompt,
@@ -220,18 +224,16 @@ const OUTERMOST_OBJECT = /\{[\s\S]*\}/;
 
 export class MalformedOutput extends Error {}
 
-// One retry, on the output rather than the model: a fenced block is the one malformation
-// that is certainly recoverable, and re-asking would cost another call to find that out.
 export function parseModelOutput(output) {
-  const raw = String(output ?? "");
+  const raw = String(output ?? "").trim();
 
-  const strict = extractionFrom(raw.trim());
-  if (strict) return strict;
+  const asWritten = extractionFrom(raw);
+  if (asWritten) return asWritten;
 
-  const unfenced = raw.trim().replace(FENCE, "");
-  const retried =
+  const unfenced = raw.replace(FENCE, "");
+  const afterStrippingFences =
     extractionFrom(unfenced) ?? extractionFrom(OUTERMOST_OBJECT.exec(unfenced)?.[0] ?? "");
-  if (retried) return retried;
+  if (afterStrippingFences) return afterStrippingFences;
 
   throw new MalformedOutput("model returned malformed output");
 }
@@ -271,9 +273,9 @@ export function createExtractor(
   config,
   {
     callModel = callClaude,
-    maxChunkChars = CHUNK_CHARS,
-    candidateLimit = CANDIDATE_TOPICS,
-    factLimit = KNOWN_FACTS,
+    maxChunkChars = CHARS_PER_MODEL_CALL,
+    candidateLimit = CANDIDATE_TOPICS_IN_A_PROMPT,
+    factLimit = KNOWN_FACTS_IN_A_PROMPT,
     timeZone,
     log = () => {},
   } = {}
@@ -299,11 +301,10 @@ export function createExtractor(
       return outcome("nothing-to-extract", { sessionId, offset: slice.offset });
     }
 
-    // A topic created minutes ago is invisible to a stale index, and an invisible topic
-    // gets recreated under a second name. So the index is refreshed before it is queried.
-    index.refresh();
-
-    const { candidates, knownFacts } = boundedContextFor(slice.text, project);
+    const { candidates, knownFacts } = boundedContextForAFreshlyIndexedCorpus(
+      slice.text,
+      project
+    );
     const prompt = buildExtractPrompt({ candidates, knownFacts });
     const chunks = chunkTurns(turns, maxChunkChars);
 
@@ -327,11 +328,9 @@ export function createExtractor(
       return outcome("nothing-to-extract", { sessionId, offset: slice.offset });
     }
 
-    // Everything above is reversible; from here the corpus changes. Writing only after
-    // every model call has returned is what keeps a crash from halving a fact (ADR 0001).
     const written = extracted.map((merged) => ({
       ...merged,
-      topic: { ...merged.topic, id: writeFacts(merged, sessionId, candidates) },
+      topic: { ...merged.topic, id: appendedToTheCorpus(merged, sessionId, candidates) },
     }));
 
     state.recordExtraction(sessionId, { offset: slice.offset, result: written[0] });
@@ -349,13 +348,9 @@ export function createExtractor(
     });
   }
 
-  // A chunk the extraction model cannot take is escalated rather than dropped: the corpus
-  // is written once and cannot be re-extracted, so a lost chunk is lost knowledge. Output
-  // that came back malformed is not escalated — the retry for that already happened on the
-  // output, and a second model is no more likely to answer in JSON.
   function extractChunk(prompt, chunk) {
     let lastError;
-    for (const model of MODELS) {
+    for (const model of EXTRACTION_MODEL_THEN_FALLBACK) {
       try {
         return parseModelOutput(callModel({ prompt: prompt + chunk, model, chunk }));
       } catch (error) {
@@ -367,23 +362,13 @@ export function createExtractor(
     throw lastError;
   }
 
-  // Everything the prompt knows about the corpus comes from this one bounded query: the
-  // candidate topics to choose between, and the facts those topics already hold.
-  function boundedContextFor(text, project) {
+  function boundedContextForAFreshlyIndexedCorpus(text, project) {
+    index.refresh();
+
     const match = salientTermsQuery(text);
     if (!match) return { candidates: [], knownFacts: [] };
 
-    // bm25 is usable only in a flat query over the full-text table, so the ranked facts
-    // come back one row at a time and are grouped into topics here.
-    const ranked = db
-      .prepare(
-        `select f.topic as topic, f.section as section, f.text as text, bm25(facts_fts) as rank
-         from facts_fts join facts f on f.id = facts_fts.rowid
-         where facts_fts match ?
-         order by bm25(facts_fts), f.date desc limit ?`
-      )
-      .all(match, RANKED_FACTS_SCANNED);
-
+    const ranked = factsRankedAgainst(match);
     const candidates = rankedCandidates(ranked, project);
     const chosen = new Set(candidates.map((candidate) => candidate.topic));
     const knownFacts = ranked
@@ -394,8 +379,17 @@ export function createExtractor(
     return { candidates, knownFacts };
   }
 
-  // A topic's score is its best-matching fact, not the sum of them: topic size is lumpy, so
-  // summing would make the largest topics permanent candidates (docs/adr/0002).
+  function factsRankedAgainst(match) {
+    return db
+      .prepare(
+        `select f.topic as topic, f.section as section, f.text as text, bm25(facts_fts) as rank
+         from facts_fts join facts f on f.id = facts_fts.rowid
+         where facts_fts match ?
+         order by bm25(facts_fts), f.date desc limit ?`
+      )
+      .all(match, FACTS_SCANNED_FOR_CANDIDATES);
+  }
+
   function rankedCandidates(ranked, project) {
     const nearby = topicsOfProject(project);
     const byTopic = new Map();
@@ -404,18 +398,18 @@ export function createExtractor(
       const entry = byTopic.get(row.topic) ?? {
         topic: row.topic,
         facts: 0,
-        score: 0,
+        bestFactScore: 0,
         sameProject: nearby.has(row.topic),
       };
       entry.facts++;
-      entry.score = Math.max(entry.score, -row.rank);
+      entry.bestFactScore = Math.max(entry.bestFactScore, -row.rank);
       byTopic.set(row.topic, entry);
     }
 
     return [...byTopic.values()]
       .map((entry) => ({
         ...entry,
-        score: entry.score * (entry.sameProject ? SAME_PROJECT_BOOST : 1),
+        score: entry.bestFactScore * (entry.sameProject ? SAME_PROJECT_BOOST : 1),
       }))
       .sort((a, b) => b.score - a.score || a.topic.localeCompare(b.topic))
       .slice(0, candidateLimit)
@@ -427,10 +421,6 @@ export function createExtractor(
     return { summary: row?.summary ?? null, keywords: row?.keywords ?? null };
   }
 
-  // A topic belongs to a project when a session in that project contributed a fact to it.
-  // A fact carries only the first eight characters of its session id, and that field comes
-  // from hand-editable markdown, so the session is matched by prefix rather than by LIKE,
-  // where an underscore in the stored text would be a wildcard.
   function topicsOfProject(project) {
     if (!project) return new Set();
     const projects = recordedProjectsUnder(db, project);
@@ -439,7 +429,7 @@ export function createExtractor(
     const rows = db
       .prepare(
         `select distinct f.topic as topic from facts f join sessions s
-           on f.session is not null and substr(s.session_id, 1, length(f.session)) = f.session
+           on f.session is not null and ${SESSION_STARTS_WITH_THE_FACTS_PREFIX}
           where s.project in (${marks})
          union
          select distinct topic from sessions
@@ -450,7 +440,7 @@ export function createExtractor(
     return new Set(rows.map((row) => row.topic));
   }
 
-  function writeFacts(merged, sessionId, candidates) {
+  function appendedToTheCorpus(merged, sessionId, candidates) {
     const topicId = resolveTopicId(merged.topic.id, candidates);
 
     topics.upsertTopic(topicId, {
@@ -467,8 +457,6 @@ export function createExtractor(
     return topicId;
   }
 
-  // The candidate list is how a session joins an existing topic, so a returned id that
-  // differs from a candidate only in shape must not open a second file for one subject.
   function resolveTopicId(returned, candidates) {
     const normalized = normalizedTopicId(returned);
     const candidate = candidates.find(
@@ -496,9 +484,6 @@ function outcome(status, extra = {}) {
   return { status, ...extra };
 }
 
-// Chunks usually describe one subject, but a long session can genuinely turn to another,
-// so facts go to the topic their own chunk named rather than to a majority vote. Ordered by
-// how much of the session each topic accounts for, and identical text counts once.
 function mergedByTopic(results) {
   const byTopic = new Map();
 
@@ -563,14 +548,14 @@ function reportExtraction(session, result) {
   console.log(`  ${result.status}`);
 }
 
-// A session is worth extracting while any of its transcript is unread, which is not the same
-// as never having been extracted: a session extracted an hour ago has since said more.
 function withUnreadTranscript(sessions, state) {
-  return sessions.filter((session) => {
-    if (state.isQuarantined(session.session_id)) return false;
-    if (!session.transcript || !existsSync(session.transcript)) return false;
-    return statSync(session.transcript).size > state.extractionOffset(session.session_id);
-  });
+  return sessions.filter((session) => hasUnreadTranscript(session, state));
+}
+
+function hasUnreadTranscript(session, state) {
+  if (state.isQuarantined(session.session_id)) return false;
+  if (!session.transcript || !existsSync(session.transcript)) return false;
+  return statSync(session.transcript).size > state.extractionOffset(session.session_id);
 }
 
 function listSessions(sessions, state) {

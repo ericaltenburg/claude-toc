@@ -75,15 +75,11 @@ export function createStateStore(
     };
   }
 
-  // The offset is how much of a transcript extraction has already paid for, so it lives with
-  // the corpus rather than in the index, which is derived and safe to delete at any time.
   function extractionOffset(sessionId) {
     const offset = load().offsets[sessionId];
     return Number.isInteger(offset) && offset >= 0 ? offset : START_OF_TRANSCRIPT;
   }
 
-  // Called only once the facts are on disk: an offset advanced before the write would turn a
-  // crash mid-extraction into a slice nobody will ever read again.
   function recordExtraction(sessionId, { offset, result = null } = {}) {
     const state = load();
     if (Number.isInteger(offset)) state.offsets[sessionId] = offset;

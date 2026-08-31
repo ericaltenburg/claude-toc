@@ -30,7 +30,7 @@ const FTS5_OPERATOR_OR_PREFIX_SEARCH = /\b(?:AND|OR|NOT|NEAR)\b|[\p{L}\p{N}]\*/u
 const TERM = /[\p{L}\p{N}_]+/gu;
 const SHORTEST_USABLE_TERM = 2;
 const SHORTEST_SALIENT_TERM = 3;
-const SALIENT_TERMS = 24;
+const MOST_REPEATED_TERMS_QUERIED = 24;
 
 const MATCH_EVERY_ROW_THE_FILTERS_ALLOW = { match: null, matchesNothing: false };
 const MATCH_NOTHING = { match: null, matchesNothing: true };
@@ -49,8 +49,6 @@ export function termsQuery(text) {
   return chosen.map(quoted).join(" OR ");
 }
 
-// A whole conversation has thousands of terms, and ORing them all is both an unusable
-// query and an unbounded one. The most repeated terms are what the conversation is about.
 export function salientTermsQuery(text) {
   const counts = new Map();
   for (const raw of String(text ?? "").match(TERM) ?? []) {
@@ -62,7 +60,7 @@ export function salientTermsQuery(text) {
 
   const ranked = [...counts.entries()]
     .sort(([termA, countA], [termB, countB]) => countB - countA || termA.localeCompare(termB))
-    .slice(0, SALIENT_TERMS);
+    .slice(0, MOST_REPEATED_TERMS_QUERIED);
   return ranked.map(([term]) => quoted(term)).join(" OR ");
 }
 
@@ -111,10 +109,6 @@ function isAtOrUnder(path, root) {
   return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
-// Every recorded project path at or under this one, so a session started in a
-// subdirectory still counts, and a sibling that merely shares a prefix does not.
-// Comparing resolved paths in JavaScript rather than with LIKE, because a path
-// containing an underscore is a LIKE wildcard and would match a sibling.
 export function recordedProjectsUnder(db, path) {
   const root = resolvedPath(path);
   const recorded = db

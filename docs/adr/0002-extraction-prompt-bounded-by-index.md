@@ -25,6 +25,16 @@ conversation regardless of subject. Same-project topics are boosted by a constan
 top of that score, which decides between comparable topics without letting an unrelated
 same-project topic outrank a real match.
 
+**The query is the conversation's most repeated terms**, non-stopword and at least three
+characters, capped at 24. ORing every term of a whole conversation is both an unusable
+full-text query and an unbounded one; term frequency is what the conversation is about.
+
+**Both caps are filled from one ranked scan of 200 matching facts.** `bm25` is usable
+only in a flat query over the full-text table — not inside an aggregate, a subquery, or
+a CTE — so the facts come back one ranked row at a time and are grouped into topics in
+JavaScript. 200 is deep enough that the same-project boost has candidates to promote
+and shallow enough to stay constant work as the corpus grows.
+
 A stale index during a sweep causes duplicate topics — the sweeper cannot see a
 topic created an hour ago — which is why refresh happens before candidate selection
 and not on a schedule.
