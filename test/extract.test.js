@@ -430,6 +430,43 @@ test("a session failing three times is quarantined and surfaced", () => {
   skipped.close();
 });
 
+test("a malformed reply is recorded with what the model actually said", () => {
+  const config = corpusWithOneTopic();
+  const model = stubModel(["I can't help with that particular request."]);
+  const extractor = extractorFor(config, model);
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.equal(result.status, "failed");
+  assert.match(
+    result.error,
+    /I can't help with that/,
+    "a failure nobody can diagnose is a failure nobody can fix"
+  );
+  assert.match(createStateStore(config).load().failures[SESSION].error, /I can't help with that/);
+});
+
+test("a released session is extracted on the next attempt", () => {
+  const config = corpusWithOneTopic();
+  const failing = stubModel(() => new Error("model unavailable"));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const extractor = extractorFor(config, failing);
+    extractor.extractSession(sessionIn(config));
+    extractor.close();
+  }
+  const state = createStateStore(config);
+  assert.equal(state.isQuarantined(SESSION), true);
+
+  state.releaseQuarantine(SESSION);
+  const retry = extractorFor(config, stubModel([MODEL_OUTPUT]));
+  const result = retry.extractSession(sessionIn(config));
+  retry.close();
+
+  assert.equal(result.status, "extracted");
+  assert.ok(factsIn(config, "alcs_broadcast_variants").some((l) => l.includes("keyed by show id")));
+});
+
 test("a failed extraction leaves the slice for the next attempt", () => {
   const config = corpusWithOneTopic();
   const failing = stubModel(() => new Error("transient"));

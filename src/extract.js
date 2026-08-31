@@ -19,6 +19,7 @@ export const KNOWN_FACTS_IN_A_PROMPT = 20;
 const FACTS_SCANNED_FOR_CANDIDATES = 200;
 const SAME_PROJECT_BOOST = 2;
 const CHARS_PER_MODEL_CALL = 300_000;
+const CHARS_PER_RETRIED_MODEL_CALL = 60_000;
 
 const EXTRACTION_MODEL_THEN_FALLBACK = [
   "global.anthropic.claude-sonnet-5",
@@ -222,7 +223,17 @@ export function parseModelOutput(output) {
     extractionFrom(unfenced) ?? extractionFrom(OUTERMOST_OBJECT.exec(unfenced)?.[0] ?? "");
   if (afterStrippingFences) return afterStrippingFences;
 
-  throw new MalformedOutput("model returned malformed output");
+  throw new MalformedOutput(`model returned malformed output: ${asEvidence(raw)}`);
+}
+
+const ENOUGH_OUTPUT_TO_DIAGNOSE_A_FAILURE = 400;
+
+function asEvidence(output) {
+  const collapsed = output.replace(/\s+/g, " ").trim();
+  if (!collapsed) return "(it returned nothing)";
+  return collapsed.length > ENOUGH_OUTPUT_TO_DIAGNOSE_A_FAILURE
+    ? `${collapsed.slice(0, ENOUGH_OUTPUT_TO_DIAGNOSE_A_FAILURE)}…`
+    : collapsed;
 }
 
 function extractionFrom(text) {
@@ -579,8 +590,8 @@ function reportDedup(config) {
   console.log(`Merged ${merges.length} topic pair(s). ${remaining} topics remain.`);
 }
 
-function extractEach(config, sessions) {
-  const extractor = createExtractor(config, { log: (line) => console.log(line) });
+function extractEach(config, sessions, options = {}) {
+  const extractor = createExtractor(config, { log: (line) => console.log(line), ...options });
   try {
     for (const session of sessions) {
       reportExtraction(session, extractor.extractSession(session));
@@ -588,6 +599,27 @@ function extractEach(config, sessions) {
   } finally {
     extractor.close();
   }
+}
+
+function retry(config, state, sessions, prefix) {
+  if (!prefix) {
+    console.log("Usage: toc-extract --retry <session-id-prefix>");
+    return 2;
+  }
+
+  const chosen = sessions.filter((session) => String(session.session_id).startsWith(prefix));
+  if (!chosen.length) {
+    console.log(`No session matching "${prefix}"`);
+    return 1;
+  }
+
+  for (const session of chosen) {
+    const released = state.releaseQuarantine(session.session_id);
+    console.log(`${session.session_id}: ${released ? "quarantine released" : "was not quarantined"}`);
+  }
+
+  extractEach(config, chosen, { maxChunkChars: CHARS_PER_RETRIED_MODEL_CALL });
+  return 0;
 }
 
 function main(argv) {
@@ -615,6 +647,10 @@ function main(argv) {
   if (!sessions) {
     console.log("No sessions indexed yet.");
     return 0;
+  }
+
+  if (arg === "--retry") {
+    return retry(config, state, sessions, argv[1]);
   }
 
   if (!arg) {

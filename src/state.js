@@ -127,6 +127,16 @@ export function createStateStore(
     return Boolean(load().quarantined[sessionId]);
   }
 
+  function releaseQuarantine(sessionId) {
+    const state = load();
+    if (!state.quarantined[sessionId]) return false;
+
+    delete state.quarantined[sessionId];
+    delete state.failures[sessionId];
+    save(state);
+    return true;
+  }
+
   function claimSweep() {
     const state = load();
     const sweptAt = Date.parse(state.sweptAt ?? "");
@@ -172,6 +182,7 @@ export function createStateStore(
     recordExtraction,
     recordFailure,
     isQuarantined,
+    releaseQuarantine,
     snapshot,
     claimSweep,
     acquireExtraction,

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 
-import { createStateStore } from "../src/state.js";
+import { ATTEMPTS_BEFORE_QUARANTINE, createStateStore } from "../src/state.js";
 import { tempCorpus } from "./support/corpus.js";
 
 function freshConfig() {
@@ -93,6 +93,21 @@ test("releasing a lock another process took does not clobber it", () => {
   createStateStore(config).releaseExtraction("someone-else");
 
   assert.equal(owner.load().extraction.holder, "mine");
+});
+
+test("releasing a quarantine clears the attempts that caused it", () => {
+  const config = freshConfig();
+  const state = createStateStore(config);
+  for (let attempt = 0; attempt < ATTEMPTS_BEFORE_QUARANTINE; attempt++) {
+    state.recordFailure("session-one", "model returned malformed output");
+  }
+  assert.equal(state.isQuarantined("session-one"), true);
+
+  assert.equal(state.releaseQuarantine("session-one"), true);
+
+  assert.equal(state.isQuarantined("session-one"), false);
+  assert.equal(state.load().failures["session-one"], undefined, "the next failure is its first");
+  assert.equal(state.releaseQuarantine("session-one"), false, "releasing twice is not a release");
 });
 
 test("adopts an existing processed.json once and never writes it again", () => {
