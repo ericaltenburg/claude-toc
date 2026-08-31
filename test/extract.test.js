@@ -111,6 +111,59 @@ test("a session's unread slice becomes facts on the topic the model chose", () =
   assert.ok(result.offset > 0);
 });
 
+const A_WEEK_AGO = Date.parse("2026-08-24T15:00:00Z");
+const THE_DAY_THE_CONVERSATION_HAPPENED = "2026-08-24";
+
+function dateOnEveryFact(config, topicId) {
+  return [...new Set(factsIn(config, topicId).map((line) => line.match(/, (\d{4}-\d{2}-\d{2})\]/)?.[1]))];
+}
+
+test("a fact is dated from the conversation, not from when the extractor ran", () => {
+  const config = tempCorpus();
+  writeTranscript(config, SESSION, CONVERSATION, { at: A_WEEK_AGO });
+  appendSessions(config, [sessionIn(config)]);
+
+  const extractor = extractorFor(config, stubModel([MODEL_OUTPUT]), { timeZone: "UTC" });
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.equal(result.status, "extracted");
+  assert.deepEqual(
+    dateOnEveryFact(config, "alcs_broadcast_variants"),
+    [THE_DAY_THE_CONVERSATION_HAPPENED],
+    "a week-old session extracted today is a week-old fact, not today's news"
+  );
+});
+
+test("a fact from a transcript with no timestamps falls back to when the session started", () => {
+  const config = tempCorpus();
+  writeTranscript(config, SESSION, CONVERSATION);
+  const started = `${THE_DAY_THE_CONVERSATION_HAPPENED}T15:00:00.000Z`;
+  appendSessions(config, [sessionIn(config, { started })]);
+
+  const extractor = extractorFor(config, stubModel([MODEL_OUTPUT]), { timeZone: "UTC" });
+  extractor.extractSession(sessionIn(config, { started }));
+  extractor.close();
+
+  assert.deepEqual(dateOnEveryFact(config, "alcs_broadcast_variants"), [
+    THE_DAY_THE_CONVERSATION_HAPPENED,
+  ]);
+});
+
+test("a fact with nothing to date it by is dated today", () => {
+  const config = tempCorpus();
+  writeTranscript(config, SESSION, CONVERSATION);
+  appendSessions(config, [sessionIn(config, { started: null })]);
+
+  const extractor = extractorFor(config, stubModel([MODEL_OUTPUT]), { timeZone: "UTC" });
+  extractor.extractSession(sessionIn(config, { started: null }));
+  extractor.close();
+
+  assert.deepEqual(dateOnEveryFact(config, "alcs_broadcast_variants"), [
+    new Date().toISOString().slice(0, 10),
+  ]);
+});
+
 test("candidate topics come from a full-text query, capped at ten", () => {
   const config = tempCorpus();
   for (let i = 0; i < 30; i++) {

@@ -100,9 +100,15 @@ export function appendTranscript(config, sessionId, turns, options = {}) {
   return path;
 }
 
-function transcriptRecord({ role = "user", text }, { cwd = null } = {}) {
+function transcriptRecord({ role = "user", text, at }, { cwd = null, at: whenTheTurnsHappened } = {}) {
   const content = role === "user" ? aBareString(text) : textBlocks(text);
-  return JSON.stringify({ type: role, cwd, message: { content } });
+  const timestamp = at ?? whenTheTurnsHappened;
+  return JSON.stringify({
+    type: role,
+    cwd,
+    ...(timestamp ? { timestamp: new Date(timestamp).toISOString() } : {}),
+    message: { content },
+  });
 }
 
 const aBareString = (text) => text;

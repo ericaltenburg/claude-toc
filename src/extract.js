@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { createModelCall } from "./bedrock.js";
 import { createConfig } from "./config.js";
+import { localDateParts } from "./parse.js";
 import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { recordedProjectsUnder, salientTermsQuery } from "./search.js";
 import { indexedSessions } from "./session-index.js";
@@ -29,13 +30,14 @@ const TURNS_WORTH_EXTRACTING = 2;
 // --- The transcript slice ---
 
 const NEWLINE = 0x0a;
+const NOTHING_UNREAD = { turns: [], text: "", lastTurnAt: null };
 
 export function unreadSlice(transcriptPath, offset) {
   const fd = openSync(transcriptPath, "r");
   try {
     const { size } = fstatSync(fd);
     const from = transcriptWasRotated(size, offset) ? START_OF_TRANSCRIPT : offset;
-    const nothingUnread = { turns: [], text: "", offset: from };
+    const nothingUnread = { ...NOTHING_UNREAD, offset: from };
     if (from >= size) return nothingUnread;
 
     const buffer = Buffer.allocUnsafe(size - from);
@@ -45,8 +47,13 @@ export function unreadSlice(transcriptPath, offset) {
     const endOfLastCompleteLine = buffer.lastIndexOf(NEWLINE, read - 1);
     if (endOfLastCompleteLine === -1) return nothingUnread;
 
-    const turns = turnsFrom(buffer.toString("utf-8", 0, endOfLastCompleteLine));
-    return { turns, text: turnsToText(turns), offset: from + endOfLastCompleteLine + 1 };
+    const { turns, lastTurnAt } = turnsFrom(buffer.toString("utf-8", 0, endOfLastCompleteLine));
+    return {
+      turns,
+      lastTurnAt,
+      text: turnsToText(turns),
+      offset: from + endOfLastCompleteLine + 1,
+    };
   } finally {
     closeSync(fd);
   }
@@ -58,6 +65,7 @@ function transcriptWasRotated(size, offset) {
 
 function turnsFrom(jsonLines) {
   const turns = [];
+  let lastTurnAt = null;
 
   for (const line of jsonLines.split("\n")) {
     if (!line.trim()) continue;
@@ -68,6 +76,8 @@ function turnsFrom(jsonLines) {
     } catch {
       continue;
     }
+
+    if (typeof entry?.timestamp === "string") lastTurnAt = entry.timestamp;
 
     const role = entry?.role || entry?.type;
     const content = entry?.message?.content;
@@ -83,7 +93,7 @@ function turnsFrom(jsonLines) {
     }
   }
 
-  return turns;
+  return { turns, lastTurnAt };
 }
 
 function pushTextBlocks(turns, role, content) {
@@ -302,9 +312,10 @@ export function createExtractor(
       return outcome("nothing-to-extract", { sessionId, offset: slice.offset });
     }
 
+    const happenedOn = whenTheConversationHappened(slice, session);
     const written = extracted.map((merged) => ({
       ...merged,
-      topic: { ...merged.topic, id: appendToCorpus(merged, sessionId, candidates) },
+      topic: { ...merged.topic, id: appendToCorpus(merged, sessionId, candidates, happenedOn) },
     }));
 
     state.recordExtraction(sessionId, {
@@ -417,7 +428,7 @@ export function createExtractor(
     return new Set(rows.map((row) => row.topic));
   }
 
-  function appendToCorpus(merged, sessionId, candidates) {
+  function appendToCorpus(merged, sessionId, candidates, happenedOn) {
     const topicId = resolveTopicId(merged.topic.id, candidates);
 
     topics.upsertTopic(topicId, {
@@ -425,13 +436,18 @@ export function createExtractor(
       summary: merged.topic.summary,
     });
     for (const fact of merged.context) {
-      topics.appendToTopic(topicId, "Context", fact, sessionId);
+      topics.appendToTopic(topicId, "Context", fact, sessionId, happenedOn);
     }
     for (const decision of merged.decisions) {
-      topics.appendToTopic(topicId, "Decisions", decision, sessionId);
+      topics.appendToTopic(topicId, "Decisions", decision, sessionId, happenedOn);
     }
 
     return topicId;
+  }
+
+  function whenTheConversationHappened(slice, session) {
+    const at = firstParsable([slice.lastTurnAt, session.started]) ?? Date.now();
+    return localDateParts(at, timeZone).date;
   }
 
   function resolveTopicId(returned, candidates) {
@@ -450,6 +466,14 @@ export function createExtractor(
   }
 
   return { extractSession, index, refresh: () => index.refresh(), close: () => index.close() };
+}
+
+function firstParsable(candidates) {
+  for (const candidate of candidates) {
+    const at = Date.parse(candidate ?? "");
+    if (Number.isFinite(at)) return at;
+  }
+  return null;
 }
 
 function normalizedTopicId(id) {

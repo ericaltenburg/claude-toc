@@ -51,12 +51,12 @@ export function createTopicStore(config) {
 
   // --- Topic file operations ---
 
-  function appendToTopic(topicId, section, entry, sessionId) {
+  function appendToTopic(topicId, section, entry, sessionId, date) {
     const topicFile = topicPath(topicId);
     if (!existsSync(topicFile)) return;
 
     const content = readFileSync(topicFile, "utf-8");
-    const line = factLine(entry, sessionId);
+    const line = factLine(entry, sessionId, date);
     const block = sectionBlock(content, section);
 
     if (!block) {
@@ -188,8 +188,8 @@ const SECTIONS = ["Context", "Decisions"];
 const MERGED_TOMBSTONE = ".merged.md";
 const SESSION_ID_LENGTH_ON_A_FACT = 8;
 
-function factLine(entry, sessionId) {
-  const date = new Date().toISOString().slice(0, 10);
+function factLine(entry, sessionId, whenTheConversationHappened) {
+  const date = whenTheConversationHappened ?? new Date().toISOString().slice(0, 10);
   const session = sessionId?.slice(0, SESSION_ID_LENGTH_ON_A_FACT) || "unknown";
   return `- ${entry} [session:${session}, ${date}]\n`;
 }
