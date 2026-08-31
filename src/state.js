@@ -2,8 +2,10 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "
 
 const STATE_VERSION = 1;
 const EXTRACTION_LEASE_MS = 300_000;
+export const SWEEP_DEBOUNCE_MS = 60_000;
 export const ATTEMPTS_BEFORE_QUARANTINE = 3;
 export const START_OF_TRANSCRIPT = 0;
+const EXTRACTOR_SESSIONS_REMEMBERED = 1000;
 
 const EMPTY = () => ({
   version: STATE_VERSION,
@@ -12,11 +14,17 @@ const EMPTY = () => ({
   failures: {},
   quarantined: {},
   extraction: null,
+  extractorSessions: {},
+  sweptAt: null,
 });
 
 export function createStateStore(
   config,
-  { leaseMs = EXTRACTION_LEASE_MS, attemptsBeforeQuarantine = ATTEMPTS_BEFORE_QUARANTINE } = {}
+  {
+    leaseMs = EXTRACTION_LEASE_MS,
+    debounceMs = SWEEP_DEBOUNCE_MS,
+    attemptsBeforeQuarantine = ATTEMPTS_BEFORE_QUARANTINE,
+  } = {}
 ) {
   let owned = null;
 
@@ -31,6 +39,8 @@ export function createStateStore(
           failures: state.failures ?? {},
           quarantined: state.quarantined ?? {},
           extraction: state.extraction ?? null,
+          extractorSessions: state.extractorSessions ?? {},
+          sweptAt: state.sweptAt ?? null,
         };
       } catch {
         return EMPTY();
@@ -73,8 +83,16 @@ export function createStateStore(
   }
 
   function extractionOffset(sessionId) {
-    const offset = load().offsets[sessionId];
-    return Number.isInteger(offset) && offset >= 0 ? offset : START_OF_TRANSCRIPT;
+    return offsetIn(load(), sessionId);
+  }
+
+  function snapshot() {
+    const state = load();
+    return {
+      isQuarantined: (sessionId) => Boolean(state.quarantined[sessionId]),
+      isExtractorSession: (sessionId) => Boolean(state.extractorSessions[sessionId]),
+      extractionOffset: (sessionId) => offsetIn(state, sessionId),
+    };
   }
 
   function recordExtraction(sessionId, { offset, result = null } = {}) {
@@ -105,6 +123,37 @@ export function createStateStore(
     return Boolean(load().quarantined[sessionId]);
   }
 
+  function claimSweep() {
+    const state = load();
+    const sweptAt = Date.parse(state.sweptAt ?? "");
+    if (Number.isFinite(sweptAt) && Date.now() - sweptAt < debounceMs) return false;
+
+    state.sweptAt = new Date().toISOString();
+    save(state);
+    return true;
+  }
+
+  function recordExtractorSession(sessionId) {
+    const state = load();
+    state.extractorSessions[sessionId] = new Date().toISOString();
+    state.extractorSessions = mostRecentlyRecorded(state.extractorSessions);
+    save(state);
+  }
+
+  function mostRecentlyRecorded(sessions) {
+    const entries = Object.entries(sessions);
+    if (entries.length <= EXTRACTOR_SESSIONS_REMEMBERED) return sessions;
+    return Object.fromEntries(
+      entries
+        .sort(([, a], [, b]) => String(b).localeCompare(String(a)))
+        .slice(0, EXTRACTOR_SESSIONS_REMEMBERED)
+    );
+  }
+
+  function isExtractorSession(sessionId) {
+    return Boolean(load().extractorSessions[sessionId]);
+  }
+
   function acquireExtraction(sessionId) {
     const state = load();
     const current = state.extraction;
@@ -128,6 +177,11 @@ export function createStateStore(
     if (owned === sessionId) owned = null;
   }
 
+  function offsetIn(state, sessionId) {
+    const offset = state.offsets[sessionId];
+    return Number.isInteger(offset) && offset >= 0 ? offset : START_OF_TRANSCRIPT;
+  }
+
   return {
     load,
     processedRecord,
@@ -135,6 +189,10 @@ export function createStateStore(
     recordExtraction,
     recordFailure,
     isQuarantined,
+    snapshot,
+    claimSweep,
+    recordExtractorSession,
+    isExtractorSession,
     acquireExtraction,
     releaseExtraction,
   };

@@ -52,16 +52,17 @@ test("defaults sit under the Claude configuration directory", () => {
   assert.equal(config.promptLog, join("/claude", "history.jsonl"));
 });
 
-test("no default path resolves inside this repository", () => {
-  const config = createConfig({}, {});
+test("no default path claude-toc writes to resolves inside this repository", () => {
+  const { extractorCommand, ...written } = createConfig({}, {});
 
-  for (const [key, value] of Object.entries(config)) {
+  assert.equal(extractorCommand, join(REPO_ROOT, "bin", "toc-extract"));
+  for (const [key, value] of Object.entries(written)) {
     assert.ok(
       !value.startsWith(REPO_ROOT + sep),
       `${key} resolves inside the repository: ${value}`
     );
   }
-  assert.ok(config.corpusDir.startsWith(join(homedir(), ".claude") + sep));
+  assert.ok(written.corpusDir.startsWith(join(homedir(), ".claude") + sep));
 });
 
 test("the config object cannot be mutated by a module that takes it", () => {

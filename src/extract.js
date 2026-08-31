@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
   fstatSync,
+  mkdirSync,
   openSync,
   readFileSync,
   readSync,
@@ -15,6 +17,7 @@ import { createConfig } from "./config.js";
 import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { recordedProjectsUnder, salientTermsQuery } from "./search.js";
 import { createStateStore, START_OF_TRANSCRIPT } from "./state.js";
+import { createSweeper, EXTRACTION_PROMPT_MARKER } from "./sweep.js";
 import { createTopicStore } from "./toc.js";
 
 export const CANDIDATE_TOPICS_IN_A_PROMPT = 10;
@@ -150,7 +153,7 @@ function splitOversizedTurn(piece, maxChars) {
 
 // --- The prompt ---
 
-const SCHEMA_INSTRUCTIONS = `You are a memory extraction system. Analyze this conversation and extract structured information.
+const SCHEMA_INSTRUCTIONS = `${EXTRACTION_PROMPT_MARKER}. Analyze this conversation and extract structured information.
 
 Return ONLY valid JSON with this exact schema:
 {
@@ -199,20 +202,29 @@ export function buildExtractPrompt({ candidates = [], knownFacts = [] } = {}) {
 
 // --- The model call ---
 
-function callClaude({ prompt, model }) {
-  return execFileSync("claude", ["-p"], {
-    input: prompt,
-    encoding: "utf-8",
-    maxBuffer: MODEL_OUTPUT_LIMIT,
-    timeout: MODEL_TIMEOUT_MS,
-    env: {
-      ...process.env,
-      AWS_PROFILE: "claudecode",
-      CLAUDE_CODE_USE_BEDROCK: "1",
-      DISABLE_PROMPT_CACHING: "1",
-      ANTHROPIC_MODEL: model,
-    },
-  });
+export function claudeUnderOurOwnSessionIds(config, { run = execFileSync } = {}) {
+  const state = createStateStore(config);
+
+  return function callClaude({ prompt, model }) {
+    const sessionId = randomUUID();
+    state.recordExtractorSession(sessionId);
+    mkdirSync(config.extractorDir, { recursive: true });
+
+    return run("claude", ["-p", "--session-id", sessionId], {
+      cwd: config.extractorDir,
+      input: prompt,
+      encoding: "utf-8",
+      maxBuffer: MODEL_OUTPUT_LIMIT,
+      timeout: MODEL_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        AWS_PROFILE: "claudecode",
+        CLAUDE_CODE_USE_BEDROCK: "1",
+        DISABLE_PROMPT_CACHING: "1",
+        ANTHROPIC_MODEL: model,
+      },
+    });
+  };
 }
 
 const FENCE = /^```[\w-]*\n?|\n?```$/g;
@@ -268,7 +280,7 @@ function stringsOnly(value) {
 export function createExtractor(
   config,
   {
-    callModel = callClaude,
+    callModel = claudeUnderOurOwnSessionIds(config),
     maxChunkChars = CHARS_PER_MODEL_CALL,
     candidateLimit = CANDIDATE_TOPICS_IN_A_PROMPT,
     factLimit = KNOWN_FACTS_IN_A_PROMPT,
@@ -587,6 +599,17 @@ function reportDedup(config) {
   console.log(`Merged ${merges.length} topic pair(s). ${remaining} topics remain.`);
 }
 
+function extractEach(config, sessions) {
+  const extractor = createExtractor(config, { log: (line) => console.log(line) });
+  try {
+    for (const session of sessions) {
+      reportExtraction(session, extractor.extractSession(session));
+    }
+  } finally {
+    extractor.close();
+  }
+}
+
 function main(argv) {
   const config = createConfig();
   const arg = argv[0];
@@ -596,13 +619,24 @@ function main(argv) {
     return 0;
   }
 
+  const state = createStateStore(config);
+
+  if (arg === "--sweep") {
+    const swept = createSweeper(config, state).candidates();
+    if (!swept.length) {
+      console.log("No session is idle enough to sweep.");
+      return 0;
+    }
+    extractEach(config, swept);
+    return 0;
+  }
+
   const sessions = loadSessions(config);
   if (!sessions) {
     console.log("No sessions indexed yet.");
     return 0;
   }
 
-  const state = createStateStore(config);
   if (!arg) {
     listSessions(sessions, state);
     return 0;
@@ -618,14 +652,7 @@ function main(argv) {
     return arg === "--all" ? 0 : 1;
   }
 
-  const extractor = createExtractor(config, { log: (line) => console.log(line) });
-  try {
-    for (const session of chosen) {
-      reportExtraction(session, extractor.extractSession(session));
-    }
-  } finally {
-    extractor.close();
-  }
+  extractEach(config, chosen);
   return 0;
 }
 

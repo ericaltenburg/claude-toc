@@ -2,7 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 
-import { createExtractor, chunkTurns, parseModelOutput } from "../src/extract.js";
+import {
+  chunkTurns,
+  claudeUnderOurOwnSessionIds,
+  createExtractor,
+  parseModelOutput,
+} from "../src/extract.js";
 import { createSearch } from "../src/search.js";
 import { createStateStore } from "../src/state.js";
 import {
@@ -561,6 +566,25 @@ test("a malformed transcript line is skipped rather than aborting the slice", ()
   extractor.close();
 
   assert.equal(result.status, "extracted");
+});
+
+test("the extractor records the session id it runs the model under, in a fixed directory", () => {
+  const config = tempCorpus();
+  const invocations = [];
+  const callModel = claudeUnderOurOwnSessionIds(config, {
+    run: (command, args, options) => {
+      invocations.push({ command, args, cwd: options.cwd });
+      return JSON.stringify(MODEL_OUTPUT);
+    },
+  });
+
+  callModel({ prompt: "extract this", model: "a-model" });
+
+  const [{ command, args, cwd }] = invocations;
+  const sessionId = args[args.indexOf("--session-id") + 1];
+  assert.equal(command, "claude");
+  assert.equal(cwd, config.extractorDir);
+  assert.ok(createStateStore(config).isExtractorSession(sessionId), sessionId);
 });
 
 test("chunkTurns keeps turns whole until a single turn cannot fit", () => {
