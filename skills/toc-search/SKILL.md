@@ -29,10 +29,11 @@ rebuild anything.
 | `--facts` / `--prompts` | one class only |
 | `--overview` | matching topic names with hit counts, no fact text |
 | `--date`, `--since`, `--until` | local dates, `YYYY-MM-DD` |
-| `--project PATH` | scope to one project directory |
+| `--project PATH` | scope to one project directory and what is under it |
+| `--all-projects` | undo the scoping an automatic search applies |
 | `--topic ID`, `--section Decisions`, `--session ID` | narrow to one |
 | `--limit N`, `--prompt-limit N` | override the default sizes (`--limit` also caps an overview) |
-| `--source automatic` | mark the search as your own judgement in the log |
+| `--source automatic` | your own judgement: logged as such, scoped to the current project |
 | `--sql "select ..."` | anything the above cannot express |
 | `--quarantined` | sessions extraction gave up on |
 | `--smoke` | liveness check against the corpus's own smoke queries |
@@ -54,10 +55,15 @@ speculation:
 - Work begins on a named service or repository.
 - The question is explicitly temporal: yesterday, last week, "when did we".
 
-Searches you run on your own judgement are scoped to the current project
-(`--project "$PWD"`) and marked `--source automatic`. A search the user asks for
-is not scoped: cross-project questions are exactly the ones a person types by
-hand.
+Pass `--source automatic` on every search you run on your own judgement. That is
+the whole contract: the command then scopes the search to the current project
+itself, so unrelated work cannot bleed into the conversation, and records the
+scope in the log. A search the user asks for is unscoped, because cross-project
+questions are exactly the ones a person types by hand.
+
+The current project is the repository you are working in, so a subdirectory finds
+the same material the root does. `--project PATH` points somewhere else;
+`--all-projects` widens an automatic search deliberately, and the log says you did.
 
 ## Choosing a shape
 
@@ -89,8 +95,11 @@ The attribution contract, which is the whole reason results are trustworthy:
 
 ## Writing SQL
 
-`--sql` takes any single `select` or `with` statement; writes are refused. The
-schema:
+`--sql` takes any single `select` or `with` statement; writes are refused. Pass
+`--source automatic` here too, but note that nothing scopes a hand-written query
+for you: filter on `project` yourself when the question is about this project only.
+An automatic `--sql` query is logged as unscoped, so the log never claims a bound
+it did not apply. The schema:
 
 - `facts(id, topic, section, text, session, date, line)` — `date` is `YYYY-MM-DD`
   and may be null.
@@ -125,7 +134,9 @@ toc-search --sql "select date, topic, text from facts
 ## Logging
 
 Every search appends one line to `search.log` in the corpus: timestamp, query,
-row count, mode, and its source: `explicit`, `automatic`, or `smoke`. This is the
+row count, mode, the project it was scoped to, and its source: `explicit`,
+`automatic`, or `smoke`. Source is what separates a trigger that fired from a
+question a person typed, so an unrecognised `--source` is refused. This is the
 instrumentation whose absence let a dead code path survive four months unnoticed,
 and it is the evidence for widening the trigger list. Do not add a way to search
 that skips it.

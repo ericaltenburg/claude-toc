@@ -84,6 +84,12 @@ manual entry point for the same thing.
 
 Search is always pull. Nothing is ever pushed into a prompt.
 
+A search is **automatic** when Claude issued it on its own judgement, and
+**explicit** when the user asked for it.
+
+The **current project** is the repository the session is working in. It is what an
+automatic search means by "this project".
+
 A retrieved fact is **dated evidence, not current truth**. The corpus has no way
 to learn that a fact went stale, because nothing writes "this changed" — a fact
 about a pinned dependency version stays confident and wrong after the bump. So a

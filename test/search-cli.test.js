@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { appendPrompts, corpusEnv, REPO_ROOT, tempCorpus, writeTopic } from "./support/corpus.js";
@@ -15,12 +15,10 @@ const FACTS = {
 
 const NODE_WITH_BUILTIN_SQLITE = process.execPath;
 
-function run(config, args) {
-  return spawnSync(CLI, args, {
-    encoding: "utf-8",
-    timeout: 20_000,
-    env: corpusEnv(config, { CLAUDE_TOC_NODE: NODE_WITH_BUILTIN_SQLITE }),
-  });
+function run(config, args, { cwd, env = {} } = {}) {
+  const environment = corpusEnv(config, { CLAUDE_TOC_NODE: NODE_WITH_BUILTIN_SQLITE, ...env });
+  if (!("CLAUDE_PROJECT_DIR" in env)) delete environment.CLAUDE_PROJECT_DIR;
+  return spawnSync(CLI, args, { cwd, encoding: "utf-8", timeout: 20_000, env: environment });
 }
 
 test("the read path's one command returns facts and prompts and stays silent on stderr", () => {
@@ -86,6 +84,17 @@ test("smoke queries exit non-zero when one comes back empty", () => {
   assert.match(result.stdout, /smoke queries FAILED/);
 });
 
+test("rows drilled out with sql carry the attribution note like any other result", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", FACTS);
+
+  const result = run(config, ["--sql", "select date, text from facts order by line"]);
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /keyed by show id/);
+  assert.match(result.stdout, /dated evidence, not current truth/);
+});
+
 test("a refused write reads as one line, not as a stack trace", () => {
   const config = tempCorpus();
 
@@ -104,6 +113,65 @@ test("a filter with no query terms is a search, not a usage error", () => {
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Will store variants in DynamoDB/);
   assert.equal(result.stdout.includes("keyed by show id"), false);
+});
+
+test("a search Claude ran itself scopes to the project it ran in", () => {
+  const config = tempCorpus();
+  appendPrompts(config, [
+    { display: "variants here", project: REPO_ROOT },
+    { display: "variants there", project: "/work/other" },
+  ]);
+
+  const result = run(config, ["--prompts", "--source", "automatic", "variants"], {
+    cwd: REPO_ROOT,
+    env: { CLAUDE_PROJECT_DIR: REPO_ROOT },
+  });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /variants here/);
+  assert.equal(result.stdout.includes("variants there"), false);
+
+  const line = JSON.parse(readFileSync(config.searchLogPath, "utf-8").trim());
+  assert.equal(line.source, "automatic");
+  assert.equal(line.project, REPO_ROOT);
+});
+
+test("an automatic search run from a subdirectory still finds the project's material", () => {
+  const config = tempCorpus();
+  appendPrompts(config, [
+    { display: "variants here", project: REPO_ROOT },
+    { display: "variants there", project: "/work/other" },
+  ]);
+
+  const result = run(config, ["--prompts", "--source", "automatic", "variants"], {
+    cwd: join(REPO_ROOT, "test", "support"),
+  });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /variants here/, "the repository is the project, not the cwd");
+  assert.equal(result.stdout.includes("variants there"), false);
+});
+
+test("json output carries the attribution note too", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", FACTS);
+
+  const searched = JSON.parse(run(config, ["--facts", "--json", "variants"]).stdout);
+  const drilled = JSON.parse(run(config, ["--json", "--sql", "select date, text from facts"]).stdout);
+
+  assert.match(searched.attribution, /dated evidence, not current truth/);
+  assert.match(drilled.attribution, /dated evidence, not current truth/);
+  assert.equal(drilled.rows.length, 2);
+});
+
+test("an unrecognised --source is a usage error rather than a mislabelled log line", () => {
+  const config = tempCorpus();
+
+  const result = run(config, ["--source", "guessed", "variants"]);
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /--source/);
+  assert.equal(existsSync(config.searchLogPath), false);
 });
 
 test("no arguments prints usage rather than searching for nothing", () => {

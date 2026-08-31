@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createConfig } from "./config.js";
@@ -8,6 +9,11 @@ import { createStateStore } from "./state.js";
 
 export const FACT_LIMIT = 20;
 export const PROMPT_LIMIT = 10;
+
+// See docs/adr/0006 for why the source of a search also decides its project scope.
+const CLAUDES_OWN_JUDGEMENT = "automatic";
+const SOURCES_A_CALLER_MAY_ASK_FOR = [CLAUDES_OWN_JUDGEMENT, "explicit"];
+const SOURCES = [...SOURCES_A_CALLER_MAY_ASK_FOR, "smoke"];
 
 // --- Query terms ---
 
@@ -58,7 +64,38 @@ function matchFor(text) {
 
 // --- Search ---
 
-export function createSearch(config, { timeZone, now = () => new Date() } = {}) {
+// A session's working directory is often a subdirectory of the project, so the project is
+// the repository that contains it. Without this, an automatic search comes back empty and
+// reads as "nothing recorded" — the silent, plausible failure ADR 0006 exists to remove.
+function theCurrentProject() {
+  return process.env.CLAUDE_PROJECT_DIR || repositoryRootAt(process.cwd()) || process.cwd();
+}
+
+function repositoryRootAt(start) {
+  let directory = resolvedPath(start);
+  for (let parent = dirname(directory); ; parent = dirname(directory)) {
+    if (existsSync(join(directory, ".git"))) return directory;
+    if (parent === directory) return null;
+    directory = parent;
+  }
+}
+
+function resolvedPath(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+function isAtOrUnder(path, root) {
+  return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
+}
+
+export function createSearch(
+  config,
+  { timeZone, now = () => new Date(), currentProject = theCurrentProject() } = {}
+) {
   const index = openIndex(config, { timeZone });
   const db = index.db;
 
@@ -79,12 +116,15 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
     section = null,
     session = null,
     source = "explicit",
+    allProjects = false,
     log = true,
   } = {}) {
+    checkedSource(source, { allowed: SOURCES, label: "source" });
     refresh();
 
+    const scope = scopeFor({ project, source, allProjects });
     const filters = {
-      project,
+      projects: scope.projects,
       since: date ?? since,
       until: date ?? until,
       topic,
@@ -110,9 +150,45 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
     const fellBackFrom =
       result.facts?.fellBackFrom ?? result.prompts?.fellBackFrom ?? result.overview?.fellBackFrom;
     if (log) {
-      logSearchBestEffort(config, now, { query, mode, rows: result.rows, source, project, fellBackFrom });
+      logSearchBestEffort(config, now, {
+        query,
+        mode,
+        rows: result.rows,
+        source,
+        project: scope.scopedTo,
+        allProjects: scope.widened,
+        fellBackFrom,
+      });
     }
     return result;
+  }
+
+  // One decision, in one place: what the search is bounded by, the path to record for it,
+  // and whether an automatic search was deliberately widened past the current project.
+  function scopeFor({ project, source, allProjects }) {
+    const boundedBy = (path) => ({ projects: projectValuesUnder(path), scopedTo: path });
+    if (project) return boundedBy(project);
+    if (source !== CLAUDES_OWN_JUDGEMENT) return { projects: null, scopedTo: null };
+    if (allProjects) return { projects: null, scopedTo: null, widened: true };
+    return boundedBy(currentProject);
+  }
+
+  // Every recorded project path at or under this one, so a session started in a
+  // subdirectory still counts, and a sibling that merely shares a prefix does not.
+  function projectValuesUnder(path) {
+    const root = resolvedPath(path);
+    const matching = recordedProjects().filter((value) => isAtOrUnder(resolvedPath(value), root));
+    return matching.length ? matching : [path];
+  }
+
+  function recordedProjects() {
+    return db
+      .prepare(
+        `select project from prompts where project is not null
+         union select project from sessions where project is not null`
+      )
+      .all()
+      .map((row) => row.project);
   }
 
   function factRows(query, filters) {
@@ -199,11 +275,20 @@ export function createSearch(config, { timeZone, now = () => new Date() } = {}) 
     }
   }
 
-  function sql(statement, params = []) {
+  function sql(statement, params = [], { source = "explicit" } = {}) {
+    checkedSource(source, { allowed: SOURCES, label: "source" });
     assertReadOnly(statement);
     refresh();
     const rows = db.prepare(statement).all(...params).map(withoutNullPrototype);
-    logSearchBestEffort(config, now, { query: statement, mode: "sql", rows: rows.length, source: "explicit" });
+    logSearchBestEffort(config, now, {
+      query: statement,
+      mode: "sql",
+      rows: rows.length,
+      source,
+      // A hand-written statement carries its own where clause, so nothing here can bound it
+      // to a project. An automatic one is logged as unscoped rather than presumed scoped.
+      allProjects: source === CLAUDES_OWN_JUDGEMENT,
+    });
     return rows;
   }
 
@@ -283,18 +368,28 @@ function conditions() {
       clauses.push(clause);
       params.push(value);
     },
+    addAll(clause, values) {
+      clauses.push(clause);
+      params.push(...values);
+    },
     params,
     where: () => (clauses.length ? `where ${clauses.join(" and ")}` : ""),
   };
 }
 
-const FACT_BELONGS_TO_PROJECT = `exists (
+function placeholders(values) {
+  return values.map(() => "?").join(", ");
+}
+
+function factBelongsToOneOf(projects) {
+  return `exists (
   select 1 from sessions s
-  where s.project = ?
+  where s.project in (${placeholders(projects)})
     and ((f.session is not null and s.session_id like f.session || '%')
       or (f.session is null and s.topic = f.topic)))`;
+}
 
-function factPlan(match, { project, since, until, topic, section, session }) {
+function factPlan(match, { projects, since, until, topic, section, session }) {
   const filter = conditions();
   let from = "facts f";
 
@@ -307,7 +402,7 @@ function factPlan(match, { project, since, until, topic, section, session }) {
   if (topic) filter.add("f.topic = ?", topic);
   if (section) filter.add("lower(f.section) = lower(?)", section);
   if (session) filter.add("f.session = ?", session);
-  if (project) filter.add(FACT_BELONGS_TO_PROJECT, project);
+  if (projects?.length) filter.addAll(factBelongsToOneOf(projects), projects);
 
   return {
     from,
@@ -317,7 +412,7 @@ function factPlan(match, { project, since, until, topic, section, session }) {
   };
 }
 
-function promptPlan(match, { project, since, until, session }) {
+function promptPlan(match, { projects, since, until, session }) {
   const filter = conditions();
   let from = "prompts p";
 
@@ -328,7 +423,7 @@ function promptPlan(match, { project, since, until, session }) {
   if (since) filter.add("p.local_date >= ?", since);
   if (until) filter.add("p.local_date <= ?", until);
   if (session) filter.add("p.session = ?", session);
-  if (project) filter.add("p.project = ?", project);
+  if (projects?.length) filter.addAll(`p.project in (${placeholders(projects)})`, projects);
 
   return {
     from,
@@ -336,6 +431,13 @@ function promptPlan(match, { project, since, until, session }) {
     params: filter.params,
     order: match ? "bm25(prompts_fts), p.ts desc" : "p.ts desc",
   };
+}
+
+// One rule, two audiences: the library knows its own three sources, the command line offers
+// the two a caller may ask for. A typo must not become a third source in the log.
+function checkedSource(value, { allowed, label }) {
+  if (allowed.includes(value)) return value;
+  throw new Error(`${label} takes ${allowed.join(" or ")}, got ${JSON.stringify(value)}`);
 }
 
 const READ_STATEMENT = /^\s*(?:select|with)\b/i;
@@ -356,7 +458,11 @@ function withoutNullPrototype(row) {
 
 // --- The search log ---
 
-function logSearchBestEffort(config, now, { query, mode, rows, source, project, fellBackFrom }) {
+function logSearchBestEffort(
+  config,
+  now,
+  { query, mode, rows, source, project, allProjects, fellBackFrom }
+) {
   try {
     mkdirSync(config.corpusDir, { recursive: true });
     appendFileSync(
@@ -368,6 +474,7 @@ function logSearchBestEffort(config, now, { query, mode, rows, source, project, 
         mode,
         source,
         ...(project ? { project } : {}),
+        ...(allProjects ? { allProjects: true } : {}),
         ...(fellBackFrom ? { fellBackFrom } : {}),
       })}\n`
     );
@@ -383,10 +490,12 @@ const USAGE = `toc-search [options] [query]
   --prompt-limit N                   prompts to return (default: ${PROMPT_LIMIT})
   --date YYYY-MM-DD                  one local day
   --since / --until YYYY-MM-DD       a local date range
-  --project PATH                     scope to one project
+  --project PATH                     scope to one project directory and what is under it
+  --all-projects                     undo the scoping an automatic search applies
   --topic ID / --section NAME        scope to one topic or section
   --session ID                       scope to one session
-  --source automatic|explicit        recorded in the search log
+  --source automatic|explicit        recorded in the search log; automatic scopes
+                                     itself to the current project
   --sql "select ..."                 anything the flags cannot express
   --quarantined                      sessions extraction gave up on
   --smoke                            run the corpus's smoke queries
@@ -425,6 +534,10 @@ export function parseArgs(argv) {
       options[arg.slice(2)] = true;
       continue;
     }
+    if (arg === "--all-projects") {
+      options.allProjects = true;
+      continue;
+    }
     if (arg.startsWith("--")) throw new Error(`unknown option ${arg}`);
     options.words.push(arg);
   }
@@ -432,6 +545,12 @@ export function parseArgs(argv) {
   options.query = options.words.join(" ");
   for (const key of ["limit", "promptLimit"]) {
     if (options[key] !== undefined) options[key] = positiveWholeNumber(options[key], key);
+  }
+  if ("source" in options) {
+    options.source = checkedSource(options.source, {
+      allowed: SOURCES_A_CALLER_MAY_ASK_FOR,
+      label: "--source",
+    });
   }
   return options;
 }
@@ -475,8 +594,8 @@ function run(argv) {
       return report(options.json ? jsonText(rows) : renderQuarantined(rows));
     }
     if (options.sqlText) {
-      const rows = search.sql(options.sqlText);
-      return report(options.json ? jsonText(rows) : renderRows(rows));
+      const rows = search.sql(options.sqlText, [], { source: options.source ?? "explicit" });
+      return report(options.json ? jsonTextWithAttribution(rows) : renderRows(rows));
     }
     if (!hasSomethingToSearchFor(options)) {
       process.stdout.write(`${USAGE}\n`);
@@ -484,7 +603,7 @@ function run(argv) {
     }
 
     const result = search.search(options);
-    return report(options.json ? jsonText(result) : render(result));
+    return report(options.json ? jsonTextWithAttribution(result) : render(result));
   } finally {
     search.close();
   }
@@ -503,9 +622,18 @@ function jsonText(value) {
   return { text: `${JSON.stringify(value, null, 2)}\n` };
 }
 
+// Machine-readable output is read by the same reader as the text, so it carries the
+// contract too. Anything else lets `--json` hand over facts with nothing attached.
+function jsonTextWithAttribution(value) {
+  const payload = Array.isArray(value) ? { rows: value } : value;
+  return jsonText({ ...payload, attribution: ATTRIBUTION_NOTE });
+}
+
 const ATTRIBUTION =
   "note: every line above is dated evidence, not current truth. Attribute it to its\n" +
   "date when you use it, and check anything load-bearing against the systems of record.\n";
+
+const ATTRIBUTION_NOTE = ATTRIBUTION.replace(/^note: /, "").replace(/\s+/g, " ").trim();
 
 function render(result) {
   const parts = [];
@@ -555,7 +683,7 @@ function pad(index) {
 
 function renderRows(rows) {
   if (!rows.length) return { text: "no rows.\n" };
-  return { text: `${rows.map((row) => JSON.stringify(row)).join("\n")}\n` };
+  return { text: `${rows.map((row) => JSON.stringify(row)).join("\n")}\n\n${ATTRIBUTION}` };
 }
 
 function renderQuarantined(rows) {
