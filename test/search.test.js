@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createSearch, ftsQuery, parseArgs } from "../src/search.js";
@@ -27,15 +28,20 @@ const FACTS = {
   Decisions: ["- Will store variants in DynamoDB [session:316972f2, 2026-05-12]"],
 };
 
-function withSearch(run) {
+function withSearch(run, options = {}) {
   const config = tempCorpus();
-  const search = createSearch(config, { timeZone: NY });
+  const search = createSearch(config, { timeZone: NY, ...options });
   try {
     return run(config, search);
   } finally {
     search.close();
   }
 }
+
+const TWO_PROJECTS = [
+  { display: "variants here", project: "/work/alcs" },
+  { display: "variants there", project: "/work/other" },
+];
 
 function logLines(config) {
   if (!existsSync(config.searchLogPath)) return [];
@@ -276,6 +282,14 @@ test("a raw sql search is logged too", () => {
   });
 });
 
+test("a sql drilldown Claude ran itself is not logged as someone asking", () => {
+  withSearch((config, search) => {
+    search.sql("select text from facts", [], { source: "automatic" });
+
+    assert.equal(logLines(config)[0].source, "automatic");
+  });
+});
+
 // --- Read-only access ---
 
 test("the sql escape hatch refuses anything that is not a read", () => {
@@ -357,6 +371,14 @@ test("a limit that is not a positive whole number is refused, not passed to sqli
     );
   }
   assert.equal(parseArgs(["--limit", "5", "variants"]).limit, 5);
+});
+
+test("the flags that govern automatic scoping parse", () => {
+  assert.equal(parseArgs(["--source", "automatic", "variants"]).source, "automatic");
+  assert.equal(parseArgs(["--all-projects", "variants"]).allProjects, true);
+  assert.equal(parseArgs(["variants"]).allProjects, undefined);
+  assert.throws(() => parseArgs(["--source", "guessed", "variants"]), /--source/);
+  assert.throws(() => parseArgs(["--source"]), /--source/, "a flag with no value is not explicit");
 });
 
 test("ftsQuery quotes each term and passes an explicit expression through", () => {
@@ -441,6 +463,179 @@ test("a fact carrying no session id stays visible to its topic's project", () =>
       ["alarm_tuning"],
       "kept because its topic was fed by that project, and not put in every project"
     );
+  });
+});
+
+// --- Automatic searches scope themselves ---
+
+test("a search on Claude's own judgement is scoped to the current project unasked", () => {
+  withSearch(
+    (config, search) => {
+      appendPrompts(config, TWO_PROJECTS);
+
+      const result = search.search({ query: "variants", mode: "prompts", source: "automatic" });
+
+      assert.deepEqual(
+        result.prompts.rows.map((row) => row.text),
+        ["variants here"],
+        "scoping is the command's job, not something Claude has to remember"
+      );
+    },
+    { currentProject: "/work/alcs" }
+  );
+});
+
+test("a search the user asked for spans every project even from inside one", () => {
+  withSearch(
+    (config, search) => {
+      appendPrompts(config, TWO_PROJECTS);
+
+      const result = search.search({ query: "variants", mode: "prompts" });
+
+      assert.equal(result.prompts.rows.length, 2, "cross-project questions are the typed ones");
+    },
+    { currentProject: "/work/alcs" }
+  );
+});
+
+test("an automatic search keeps the project it was handed", () => {
+  withSearch(
+    (config, search) => {
+      appendPrompts(config, TWO_PROJECTS);
+
+      const result = search.search({
+        query: "variants",
+        mode: "prompts",
+        source: "automatic",
+        project: "/work/other",
+      });
+
+      assert.deepEqual(
+        result.prompts.rows.map((row) => row.text),
+        ["variants there"]
+      );
+    },
+    { currentProject: "/work/alcs" }
+  );
+});
+
+test("an automatic search can be widened past the current project on purpose", () => {
+  withSearch(
+    (config, search) => {
+      appendPrompts(config, TWO_PROJECTS);
+
+      const result = search.search({
+        query: "variants",
+        mode: "prompts",
+        source: "automatic",
+        allProjects: true,
+      });
+
+      assert.equal(result.prompts.rows.length, 2);
+      assert.deepEqual(logLines(config)[0].project, undefined);
+      assert.equal(logLines(config)[0].allProjects, true, "a widened search says so in the log");
+    },
+    { currentProject: "/work/alcs" }
+  );
+});
+
+test("the log records the project an automatic search scoped itself to", () => {
+  withSearch(
+    (config, search) => {
+      search.search({ query: "variants", source: "automatic" });
+
+      assert.deepEqual(logLines(config)[0].project, "/work/alcs");
+    },
+    { currentProject: "/work/alcs" }
+  );
+});
+
+test("a session started in a subdirectory still counts as this project", () => {
+  withSearch(
+    (config, search) => {
+      appendPrompts(config, [
+        { display: "variants in a subdirectory", project: "/work/alcs/src/poller" },
+        { display: "variants next door", project: "/work/alcs-old" },
+        { display: "variants further up", project: "/work" },
+      ]);
+
+      const result = search.search({ query: "variants", mode: "prompts", source: "automatic" });
+
+      assert.deepEqual(
+        result.prompts.rows.map((row) => row.text),
+        ["variants in a subdirectory"],
+        "under the project counts; a prefix sibling and the directory above it do not"
+      );
+    },
+    { currentProject: "/work/alcs" }
+  );
+});
+
+test("the project is matched through a symlink rather than by spelling", () => {
+  const real = mkdtempSync(join(tmpdir(), "claude-toc-project-"));
+  const linked = `${real}-link`;
+  symlinkSync(real, linked);
+
+  withSearch(
+    (config, search) => {
+      appendPrompts(config, [{ display: "variants under the real path", project: real }]);
+
+      const result = search.search({ query: "variants", mode: "prompts", source: "automatic" });
+
+      assert.equal(result.prompts.rows.length, 1, "the same directory by another name");
+    },
+    { currentProject: linked }
+  );
+});
+
+test("a project given by hand also covers what is under it", () => {
+  withSearch((config, search) => {
+    appendPrompts(config, [
+      { display: "variants in a subdirectory", project: "/work/alcs/src" },
+      { display: "variants next door", project: "/work/other" },
+    ]);
+
+    const result = search.search({ query: "variants", mode: "prompts", project: "/work/alcs" });
+
+    assert.deepEqual(
+      result.prompts.rows.map((row) => row.text),
+      ["variants in a subdirectory"]
+    );
+  });
+});
+
+test("a widened search is only logged as widened when there was scoping to undo", () => {
+  withSearch(
+    (config, search) => {
+      search.search({ query: "variants", allProjects: true });
+
+      assert.equal(
+        logLines(config)[0].allProjects,
+        undefined,
+        "an explicit search was never scoped, so nothing was widened"
+      );
+    },
+    { currentProject: "/work/alcs" }
+  );
+});
+
+test("an automatic sql query is logged as unscoped, since nothing can bound it", () => {
+  withSearch(
+    (config, search) => {
+      search.sql("select text from facts", [], { source: "automatic" });
+
+      const line = logLines(config)[0];
+      assert.equal(line.source, "automatic");
+      assert.equal(line.allProjects, true);
+      assert.equal(line.project, undefined);
+    },
+    { currentProject: "/work/alcs" }
+  );
+});
+
+test("an unrecognised source is refused, so the log stays evidence", () => {
+  withSearch((_config, search) => {
+    assert.throws(() => search.search({ query: "variants", source: "guessed" }), /source/i);
   });
 });
 
