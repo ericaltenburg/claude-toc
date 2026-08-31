@@ -12,7 +12,8 @@
     "test": "node --disable-warning=ExperimentalWarning --test",
     "search": "./bin/toc-search",
     "extract": "./bin/toc-extract",
-    "smoke": "./bin/toc-search --smoke"
+    "smoke": "./bin/toc-search --smoke",
+    "spend": "./bin/toc-spend"
   },
   "dependencies": {},
   "engines": {

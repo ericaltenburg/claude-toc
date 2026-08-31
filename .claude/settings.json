@@ -1,5 +1,23 @@
 {
   "permissions": {
     "allow": ["Bash($CLAUDE_TOC_HOME/bin/toc-search:*)"]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_TOC_NODE:-node}\" \"$CLAUDE_PROJECT_DIR/hooks/toc-logger.mjs\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_TOC_NODE:-node}\" \"$CLAUDE_PROJECT_DIR/hooks/toc-sweep.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }

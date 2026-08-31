@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 
-import { createExtractor, chunkTurns, parseModelOutput } from "../src/extract.js";
+import { chunkTurns, createExtractor, parseModelOutput } from "../src/extract.js";
 import { createSearch } from "../src/search.js";
 import { createStateStore } from "../src/state.js";
 import {
@@ -561,6 +561,20 @@ test("a malformed transcript line is skipped rather than aborting the slice", ()
   extractor.close();
 
   assert.equal(result.status, "extracted");
+});
+
+test("each chunk's model call carries the session it came from, so spend is attributable", () => {
+  const config = corpusWithOneTopic();
+  const model = stubModel([MODEL_OUTPUT]);
+  const extractor = extractorFor(config, model);
+
+  extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.deepEqual(
+    model.calls.map((call) => call.sessionId),
+    [SESSION]
+  );
 });
 
 test("chunkTurns keeps turns whole until a single turn cannot fit", () => {

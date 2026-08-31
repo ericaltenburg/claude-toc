@@ -1,14 +1,22 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdtempSync,
+  mkdirSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { createConfig } from "../../src/config.js";
 
 export const REPO_ROOT = join(import.meta.dirname, "..", "..");
 export const LOGGER_HOOK = join(REPO_ROOT, "hooks", "toc-logger.mjs");
-export const EXTRACT_HOOK = join(REPO_ROOT, "hooks", "toc-extract.mjs");
+export const SWEEP_HOOK = join(REPO_ROOT, "hooks", "toc-sweep.mjs");
 export const EXTRACTOR = join(REPO_ROOT, "bin", "toc-extract");
+export const SPEND_REPORT = join(REPO_ROOT, "bin", "toc-spend");
 
 export function tempCorpus() {
   const root = mkdtempSync(join(tmpdir(), "claude-toc-"));
@@ -81,27 +89,49 @@ export function promptRecord({
   return { display, pastedContents: {}, timestamp, project, sessionId };
 }
 
-export function transcriptPath(config, sessionId) {
-  return join(config.transcriptsDir, `${sessionId}.jsonl`);
+export function transcriptPath(config, sessionId, { projectDir = config.transcriptsDir } = {}) {
+  return join(projectDir, `${sessionId}.jsonl`);
 }
 
-export function appendTranscript(config, sessionId, turns) {
-  const lines = turns.map(transcriptRecord);
-  appendFileSync(transcriptPath(config, sessionId), lines.map((line) => `${line}\n`).join(""));
-  return transcriptPath(config, sessionId);
+export function appendTranscript(config, sessionId, turns, options = {}) {
+  const path = transcriptPath(config, sessionId, options);
+  const lines = turns.map((turn) => transcriptRecord(turn, options));
+  appendFileSync(path, lines.map((line) => `${line}\n`).join(""));
+  return path;
 }
 
-function transcriptRecord({ role = "user", text }) {
+function transcriptRecord({ role = "user", text }, { cwd = null } = {}) {
   const content = role === "user" ? aBareString(text) : textBlocks(text);
-  return JSON.stringify({ type: role, message: { content } });
+  return JSON.stringify({ type: role, cwd, message: { content } });
 }
 
 const aBareString = (text) => text;
 const textBlocks = (text) => [{ type: "text", text }];
 
-export function writeTranscript(config, sessionId, turns) {
-  writeFileSync(transcriptPath(config, sessionId), "");
-  return appendTranscript(config, sessionId, turns);
+export function writeTranscript(config, sessionId, turns, options = {}) {
+  const path = transcriptPath(config, sessionId, options);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, "");
+  return appendTranscript(config, sessionId, turns, options);
+}
+
+export function writeRawTranscript(config, sessionId, records, options = {}) {
+  const path = transcriptPath(config, sessionId, options);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, records.map((record) => `${JSON.stringify(record)}\n`).join(""));
+  return path;
+}
+
+export function idleFor(path, ms) {
+  const { atime } = statSync(path);
+  utimesSync(path, atime, new Date(Date.now() - ms));
+  return path;
+}
+
+export function fakeExtractor(config, { writesTo }) {
+  const path = join(config.corpusDir, "fake-extractor.sh");
+  writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' "$PWD $*" >> "${writesTo}"\n`, { mode: 0o755 });
+  return path;
 }
 
 export function appendSessions(config, records) {

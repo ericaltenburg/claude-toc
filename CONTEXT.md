@@ -103,6 +103,14 @@ Turning a slice of one session's transcript into facts, and appending them to a
 topic. Extraction is expensive, asynchronous, and best-effort. It costs money and
 runs behind the live conversation.
 
+## Spend
+
+What extraction cost, recorded per model call: the tokens in and out, the model, and
+the session the call was extracting. Tokens are measured; dollars are an estimate from
+a rate table, because rates are not something this project can observe.
+
+Spend is a record of the write path only. Search costs nothing.
+
 ## Quarantine
 
 A session extraction has given up on after repeated failure, recorded with its

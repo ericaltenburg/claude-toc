@@ -15,8 +15,9 @@ import {
   writeTranscript,
   REPO_ROOT,
   LOGGER_HOOK,
-  EXTRACT_HOOK,
+  SWEEP_HOOK,
   EXTRACTOR,
+  SPEND_REPORT,
 } from "./support/corpus.js";
 
 function repoStatus() {
@@ -55,11 +56,12 @@ test("every write lands in the configured corpus and none in the repository", ()
   index.close();
 
   runNode(LOGGER_HOOK, { input: sessionPayload(config), config });
-  runNode(EXTRACT_HOOK, { input: sessionPayload(config), config });
-  for (const args of [[], ["--dedup"], ["nosuchsession"]]) {
+  runNode(SWEEP_HOOK, { input: sessionPayload(config), config });
+  for (const args of [[], ["--dedup"], ["--sweep"], ["nosuchsession"]]) {
     const result = runCli(EXTRACTOR, { args, config });
     assert.equal(result.stderr, "", `toc-extract ${args.join(" ")}`);
   }
+  assert.equal(runCli(SPEND_REPORT, { config }).stderr, "");
 
   assert.ok(existsSync(join(config.topicsDir, "alcs_broadcast_variants.md")));
   assert.ok(existsSync(config.tocPath));
