@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 
 import {
   createStatusReport,
   renderStatus,
+  summarizeSearchLog,
   summarizeStatus,
   EXTRACTION_IS_STALE_AFTER_MS,
 } from "../src/status.js";
@@ -656,6 +657,211 @@ test("counts past a thousand are separated wherever the block reports them", () 
     "facts/topic   min 1,000  median 2,000  max 90,000 junk_drawer"
   );
   assert.equal(corpusRow(report, "facts").note, "added   7d 5,000   30d 12,000");
+});
+
+// --- The search block ---
+
+function searchRow(report, label) {
+  const block = report.blocks.find((candidate) => candidate.title === "SEARCH");
+  assert.ok(block, "the report should carry a SEARCH block");
+  const row = block.rows.find((candidate) => candidate.label === label);
+  assert.ok(row, `the SEARCH block should carry a "${label}" row`);
+  return row;
+}
+
+function searchColumns(report) {
+  return report.blocks.find((candidate) => candidate.title === "SEARCH").columns;
+}
+
+function appendSearches(config, entries) {
+  mkdirSync(config.corpusDir, { recursive: true });
+  appendFileSync(
+    config.searchLogPath,
+    entries.map((entry) => `${typeof entry === "string" ? entry : JSON.stringify(entry)}\n`).join("")
+  );
+}
+
+function searched({ at, source = "explicit", rows = 3, ...rest }) {
+  return { ts: new Date(at).toISOString(), query: "broadcast variants", rows, source, ...rest };
+}
+
+test("the search block counts each source over seven days, thirty days and all time", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const summary = summarizeSearchLog(
+    [
+      searched({ at: now }),
+      searched({ at: now - A_DAY, source: "automatic" }),
+      searched({ at: now - 20 * A_DAY, source: "smoke" }),
+      searched({ at: now - 100 * A_DAY, source: "explicit" }),
+    ],
+    { at: now, timeZone: NEW_YORK }
+  );
+  const report = summarizeStatus({ ...extractionReadings(), search: summary }, { now: () => now });
+
+  assert.deepEqual(searchColumns(report), ["7d", "30d", "all-time"]);
+  assert.deepEqual(searchRow(report, "automatic").values, ["1", "1", "1"]);
+  assert.deepEqual(searchRow(report, "explicit").values, ["1", "1", "2"]);
+  assert.deepEqual(searchRow(report, "smoke").values, ["0", "1", "1"]);
+});
+
+test("automatic is its own row and is never folded into a total", () => {
+  const report = summarizeStatus({ ...extractionReadings() }, {
+    now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
+  });
+  const labels = report.blocks.find((block) => block.title === "SEARCH").rows.map((r) => r.label);
+
+  assert.deepEqual(labels, ["automatic", "explicit", "smoke", "returned nothing", "syntax fallbacks"]);
+});
+
+test("searches that returned nothing and queries that fell back are counted", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const summary = summarizeSearchLog(
+    [
+      searched({ at: now, rows: 0 }),
+      searched({ at: now, rows: 0, fellBackFrom: "broadcast AND" }),
+      searched({ at: now, rows: 4, fellBackFrom: "broadcast NEAR" }),
+    ],
+    { at: now, timeZone: NEW_YORK }
+  );
+  const report = summarizeStatus({ ...extractionReadings(), search: summary }, { now: () => now });
+
+  assert.deepEqual(searchRow(report, "returned nothing").values, ["2", "2", "2"]);
+  assert.deepEqual(searchRow(report, "syntax fallbacks").values, ["2", "2", "2"]);
+});
+
+test("a deliberately widened search is not reported as a signal about health", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const summary = summarizeSearchLog([searched({ at: now, allProjects: true })], {
+    at: now,
+    timeZone: NEW_YORK,
+  });
+  const report = summarizeStatus({ ...extractionReadings(), search: summary }, { now: () => now });
+  const labels = report.blocks.find((block) => block.title === "SEARCH").rows.map((r) => r.label);
+
+  assert.deepEqual(labels.filter((label) => /project/i.test(label)), []);
+});
+
+test("an entry late in the local evening lands in the local day, not the UTC one", () => {
+  // 2026-08-27T02:30:00Z is still the 26th in New York, so a window opening on the 27th
+  // must exclude it. Bucketing on the UTC date would count it.
+  const summary = summarizeSearchLog([searched({ at: Date.parse("2026-08-27T02:30:00Z") })], {
+    at: Date.parse("2026-09-02T15:00:00Z"),
+    timeZone: NEW_YORK,
+  });
+
+  assert.deepEqual(summary.tallies.find((t) => t.label === "explicit").counts, [0, 1, 1]);
+});
+
+test("a search window counts back in local dates across a daylight-saving boundary", () => {
+  const justAfterLocalMidnightAfterSpringForward = Date.parse("2026-03-10T04:30:00Z");
+  const summary = summarizeSearchLog(
+    [
+      searched({ at: Date.parse("2026-03-04T18:00:00Z") }),
+      searched({ at: Date.parse("2026-03-03T18:00:00Z") }),
+    ],
+    { at: justAfterLocalMidnightAfterSpringForward, timeZone: NEW_YORK }
+  );
+
+  assert.deepEqual(summary.tallies.find((t) => t.label === "explicit").counts, [1, 2, 2]);
+});
+
+test("a malformed line in the search log is skipped rather than breaking the report", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  appendSearches(config, [
+    searched({ at: now }),
+    "{not json at all",
+    "[]",
+    searched({ at: now, source: "automatic" }),
+  ]);
+
+  const report = statusOver(config, { at: now });
+
+  assert.deepEqual(searchRow(report, "explicit").values, ["1", "1", "1"]);
+  assert.deepEqual(searchRow(report, "automatic").values, ["1", "1", "1"]);
+});
+
+test("an entry with an unreadable timestamp counts all-time but in no window", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const summary = summarizeSearchLog([{ ts: "not a date", rows: 3, source: "explicit" }], {
+    at: now,
+    timeZone: NEW_YORK,
+  });
+
+  assert.deepEqual(summary.tallies.find((t) => t.label === "explicit").counts, [0, 0, 1]);
+});
+
+test("an absent search log renders the block with zeros rather than failing", () => {
+  const config = tempCorpus();
+
+  const report = statusOver(config);
+
+  assert.deepEqual(searchRow(report, "automatic").values, ["0", "0", "0"]);
+  assert.deepEqual(searchRow(report, "returned nothing").values, ["0", "0", "0"]);
+});
+
+test("nothing in the search block reaches the verdict, however rarely the read path fires", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const summary = summarizeSearchLog(
+    [
+      ...Array.from({ length: 50 }, () => searched({ at: now, rows: 0 })),
+      searched({ at: now, source: "automatic", rows: 0 }),
+    ],
+    { at: now, timeZone: NEW_YORK }
+  );
+  const report = summarizeStatus(
+    {
+      ...extractionReadings({ processed: { count: 4, lastAt: now - A_MINUTE } }),
+      search: summary,
+    },
+    { now: () => now }
+  );
+
+  assert.equal(report.verdict.label, "healthy");
+  assert.deepEqual(report.verdict.problems, []);
+});
+
+test("reading the status leaves the search log exactly as the read path wrote it", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  appendSearches(config, [searched({ at: now })]);
+  const before = readFileSync(config.searchLogPath, "utf-8");
+
+  runCli(STATUS_REPORT, { config });
+
+  assert.equal(readFileSync(config.searchLogPath, "utf-8"), before);
+});
+
+test("toc-status prints the search block in aligned columns", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  appendSearches(config, [
+    searched({ at: now, source: "automatic" }),
+    searched({ at: now }),
+    searched({ at: now, source: "smoke", rows: 0 }),
+  ]);
+
+  const report = runCli(STATUS_REPORT, { config });
+
+  assert.equal(report.status, 0);
+  assert.equal(report.stderr, "");
+  assert.match(report.stdout, /^SEARCH\s+7d\s+30d\s+all-time$/m);
+  assert.match(report.stdout, /^ {2}automatic\s+1\s+1\s+1$/m);
+  assert.match(report.stdout, /^ {2}returned nothing\s+1\s+1\s+1$/m);
+  assert.match(report.stdout, /^ {2}syntax fallbacks\s+0\s+0\s+0$/m);
+});
+
+test("--markdown gives the search block one column per window", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  appendSearches(config, [searched({ at: now, source: "automatic" })]);
+
+  const report = runCli(STATUS_REPORT, { config, args: ["--markdown"] });
+
+  assert.equal(report.status, 0);
+  assert.match(report.stdout, /^## SEARCH$/m);
+  assert.match(report.stdout, /^\| reading \| 7d \| 30d \| all-time \|$/m);
+  assert.match(report.stdout, /^\| automatic \| 1 \| 1 \| 1 \|$/m);
 });
 
 // --- The command line ---

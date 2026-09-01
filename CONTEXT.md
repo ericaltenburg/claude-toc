@@ -86,8 +86,15 @@ manual entry point for the same thing.
 
 Search is always pull. Nothing is ever pushed into a prompt.
 
-A search is **automatic** when Claude issued it on its own judgement, and
-**explicit** when the user asked for it.
+A search is **automatic** when Claude issued it on its own judgement,
+**explicit** when the user asked for it, and **smoke** when it came from the
+corpus's own smoke queries.
+
+Every search is recorded with the source that issued it, how many rows it
+returned, and whether its query syntax was rejected and retried as bare terms —
+a **syntax fallback**, which is a query that degraded without saying so. A
+search that **returned nothing** and a syntax fallback are both read-path
+quality signals, never blockage.
 
 The **current project** is the repository the session is working in. It is what an
 automatic search means by "this project".

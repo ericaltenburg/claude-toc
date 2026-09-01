@@ -4,6 +4,7 @@ import { dirname, join, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createConfig } from "./config.js";
+import { parseJsonLine } from "./parse.js";
 import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { createStateStore } from "./state.js";
 
@@ -12,7 +13,7 @@ export const PROMPT_LIMIT = 10;
 
 const CLAUDES_OWN_JUDGEMENT = "automatic";
 const SOURCES_A_CALLER_MAY_ASK_FOR = [CLAUDES_OWN_JUDGEMENT, "explicit"];
-const SOURCES = [...SOURCES_A_CALLER_MAY_ASK_FOR, "smoke"];
+export const SOURCES = [...SOURCES_A_CALLER_MAY_ASK_FOR, "smoke"];
 
 // --- Query terms ---
 
@@ -490,6 +491,15 @@ function logSearchBestEffort(
       })}\n`
     );
   } catch {}
+}
+
+export function searchLogEntries(config) {
+  if (!existsSync(config.searchLogPath)) return [];
+  return readFileSync(config.searchLogPath, "utf-8")
+    .split("\n")
+    .filter((line) => line.trim())
+    .map(parseJsonLine)
+    .filter(Boolean);
 }
 
 // --- CLI ---

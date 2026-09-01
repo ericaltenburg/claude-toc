@@ -74,7 +74,7 @@ export function localDateParts(ms, timeZone) {
   };
 }
 
-function parseJsonLine(line) {
+export function parseJsonLine(line) {
   try {
     const record = JSON.parse(line);
     return record && typeof record === "object" ? record : null;

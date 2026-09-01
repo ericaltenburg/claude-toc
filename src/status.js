@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { createConfig } from "./config.js";
 import { localDateParts } from "./parse.js";
+import { searchLogEntries, SOURCES } from "./search.js";
 import { openIndex } from "./search-index.js";
 import { createStateStore } from "./state.js";
 import { createSweeper } from "./sweep.js";
@@ -25,11 +26,14 @@ export function createStatusReport(
   { now = () => Date.now(), timeZone, staleAfterMs } = {}
 ) {
   function read() {
-    const corpus = corpusReadings();
     return summarizeStatus(
-      { extraction: extractionReadings(), corpus },
+      { extraction: extractionReadings(), corpus: corpusReadings(), search: searchReadings() },
       { now, timeZone, staleAfterMs }
     );
+  }
+
+  function searchReadings() {
+    return summarizeSearchLog(searchLogEntries(config), { at: now(), timeZone });
   }
 
   function corpusReadings() {
@@ -166,6 +170,57 @@ function startOfWindow(at, days, timeZone) {
 
 const MIDDAY = "12:00:00Z";
 
+// --- The search log ---
+
+// The search log stores an ISO timestamp and no local date, unlike the spend log. Per ADR
+// 0005 the windows are local days, so the local date is derived here and the log is left
+// exactly as the read path writes it.
+export function summarizeSearchLog(entries, { at = Date.now(), timeZone } = {}) {
+  const windows = SEARCH_WINDOWS.map((days) => ({
+    days,
+    since: days === ALL_TIME ? null : startOfWindow(at, days, timeZone),
+  }));
+
+  const counted = entries.map((entry) => ({
+    localDate: localDateOrNull(entry.ts, timeZone),
+    source: entry.source,
+    returnedNothing: entry.rows === 0,
+    fellBack: Boolean(entry.fellBackFrom),
+  }));
+
+  const tallies = [
+    ...SOURCES.map((source) => ({
+      label: source,
+      matches: (entry) => entry.source === source,
+    })),
+    { label: "returned nothing", matches: (entry) => entry.returnedNothing },
+    { label: "syntax fallbacks", matches: (entry) => entry.fellBack },
+  ];
+
+  return {
+    windows: windows.map(({ days }) => ({ days })),
+    tallies: tallies.map(({ label, matches }) => ({
+      label,
+      counts: windows.map(
+        ({ since }) => counted.filter((entry) => matches(entry) && within(entry, since)).length
+      ),
+    })),
+  };
+}
+
+const ALL_TIME = null;
+const SEARCH_WINDOWS = [7, 30, ALL_TIME];
+
+function within(entry, since) {
+  if (since === ALL_TIME) return true;
+  return entry.localDate !== null && entry.localDate >= since;
+}
+
+function localDateOrNull(isoTimestamp, timeZone) {
+  const ms = millisecondsOrNull(isoTimestamp);
+  return ms === null ? null : localDateParts(ms, timeZone).date;
+}
+
 // --- Summarising ---
 
 export function summarizeStatus(
@@ -175,10 +230,11 @@ export function summarizeStatus(
   const at = now();
   const extraction = { ...NOTHING_RECORDED, ...readings.extraction };
   const corpus = { ...NOTHING_INDEXED, ...readings.corpus };
+  const search = readings.search ?? summarizeSearchLog([], { at, timeZone });
 
   return {
     verdict: verdictFor(extraction, at, staleAfterMs),
-    blocks: [extractionBlock(extraction, at, timeZone), corpusBlock(corpus)],
+    blocks: [extractionBlock(extraction, at, timeZone), corpusBlock(corpus), searchBlock(search)],
   };
 }
 
@@ -297,6 +353,19 @@ function corpusBlock(corpus) {
   };
 }
 
+function searchBlock(search) {
+  return {
+    title: "SEARCH",
+    columns: search.windows.map(windowHeading),
+    rows: search.tallies.map((tally) => ({
+      label: tally.label,
+      values: tally.counts.map(thousands),
+    })),
+  };
+}
+
+const windowHeading = ({ days }) => (days === ALL_TIME ? "all-time" : `${days}d`);
+
 function spreadNote({ min, median, max, largest }) {
   const largestNamed = largest ? `${thousands(max)} ${largest}` : thousands(max);
   return `facts/topic   min ${thousands(min)}  median ${thousands(median)}  max ${largestNamed}`;
@@ -369,12 +438,13 @@ const REPORT_WIDTH = 68;
 const LABEL_WIDTH = 21;
 const RIGHT_ALIGNED_WIDTH = 7;
 const VALUE_WIDTH = 15;
+const COLUMN_WIDTHS = [5, 9, 11];
 
 export function renderStatus(report) {
   const lines = [verdictLine(report.verdict), ...report.verdict.problems.map((p) => `  ! ${p}`)];
 
   for (const block of report.blocks) {
-    lines.push("", block.title);
+    lines.push("", heading(block));
     for (const row of block.rows) {
       lines.push(`  ${row.label.padEnd(LABEL_WIDTH)}${valueField(row)}`);
     }
@@ -383,9 +453,26 @@ export function renderStatus(report) {
   return `${lines.join("\n")}\n`;
 }
 
+const inColumnLayout = (block) => Boolean(block.columns);
+
+function heading(block) {
+  if (!inColumnLayout(block)) return block.title;
+  return `${block.title.padEnd(LABEL_WIDTH + INDENT)}${inColumns(block.columns)}`;
+}
+
 function valueField(row) {
+  if (row.values) return inColumns(row.values);
   const value = row.rightAligned ? row.value.padStart(RIGHT_ALIGNED_WIDTH) : row.value;
   return row.note ? `${value.padEnd(VALUE_WIDTH)}${row.note}` : value;
+}
+
+const INDENT = 2;
+const A_COLUMN_PAST_THE_NAMED_WIDTHS = COLUMN_WIDTHS.at(-1);
+
+function inColumns(cells) {
+  return cells
+    .map((cell, i) => cell.padStart(COLUMN_WIDTHS[i] ?? A_COLUMN_PAST_THE_NAMED_WIDTHS))
+    .join("");
 }
 
 function verdictLine(verdict) {
@@ -400,16 +487,20 @@ export function renderStatusAsMarkdown(report) {
   }
 
   for (const block of report.blocks) {
-    const headings = block.rows.some((row) => row.note)
-      ? ["reading", "value", "note"]
-      : ["reading", "value"];
+    const headings = ["reading", ...valueHeadings(block)];
     lines.push("", `## ${block.title}`, "", tableRow(headings), tableRow(headings.map(() => "---")));
     for (const row of block.rows) {
-      lines.push(tableRow([row.label, row.value, row.note ?? ""].slice(0, headings.length)));
+      const values = row.values ?? [row.value, row.note ?? ""];
+      lines.push(tableRow([row.label, ...values].slice(0, headings.length)));
     }
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+function valueHeadings(block) {
+  if (inColumnLayout(block)) return block.columns;
+  return block.rows.some((row) => row.note) ? ["value", "note"] : ["value"];
 }
 
 const tableRow = (cells) => `| ${cells.join(" | ")} |`;
