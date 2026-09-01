@@ -4,7 +4,8 @@ import { readFileSync, writeFileSync, existsSync, mkdtempSync, symlinkSync } fro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createSearch, ftsQuery, parseArgs } from "../src/search.js";
+import { createSearch, ftsQuery } from "../src/search.js";
+import { parseArgs } from "../src/cli/search.js";
 import { createStateStore } from "../src/state.js";
 import {
   AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,

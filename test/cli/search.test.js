@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { appendPrompts, corpusEnv, REPO_ROOT, tempCorpus, writeTopic } from "./support/corpus.js";
+import { appendPrompts, corpusEnv, REPO_ROOT, tempCorpus, writeTopic } from "../support/corpus.js";
 
 const CLI = join(REPO_ROOT, "bin", "toc-search");
 
