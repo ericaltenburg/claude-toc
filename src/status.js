@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { createConfig } from "./config.js";
@@ -24,14 +25,24 @@ export function createStatusReport(
   { now = () => Date.now(), timeZone, staleAfterMs } = {}
 ) {
   function read() {
-    refreshTheIndex();
-    return summarizeStatus({ extraction: extractionReadings() }, { now, timeZone, staleAfterMs });
+    const corpus = corpusReadings();
+    return summarizeStatus(
+      { extraction: extractionReadings(), corpus },
+      { now, timeZone, staleAfterMs }
+    );
   }
 
-  function refreshTheIndex() {
+  function corpusReadings() {
     const index = openIndex(config, { timeZone });
     try {
+      const startedAt = performance.now();
       index.refresh();
+      const refreshMs = performance.now() - startedAt;
+      return {
+        ...indexStatistics(index.db, { at: now(), timeZone }),
+        refreshMs,
+        bytes: bytesOnDiskOrNull(config.indexPath),
+      };
     } finally {
       index.close();
     }
@@ -84,6 +95,77 @@ function millisecondsOrNull(isoTimestamp) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function bytesOnDiskOrNull(path) {
+  try {
+    return statSync(path).size;
+  } catch {
+    return null;
+  }
+}
+
+// --- Index statistics ---
+
+const GROWTH_WINDOWS_IN_DAYS = [7, 30];
+
+function indexStatistics(db, { at = Date.now(), timeZone } = {}) {
+  const totals = db
+    .prepare(
+      `select (select count(*) from topics)   as topics,
+              (select count(*) from facts)    as facts,
+              (select count(*) from prompts)  as prompts,
+              (select count(*) from sessions) as sessions`
+    )
+    .get();
+
+  return {
+    ...totals,
+    factsPerTopic: factsPerTopic(db),
+    added: GROWTH_WINDOWS_IN_DAYS.map((days) => ({
+      days,
+      facts: factsAddedSince(db, startOfWindow(at, days, timeZone)),
+    })),
+  };
+}
+
+function factsPerTopic(db) {
+  const counts = db
+    .prepare(
+      `select t.id as topic, count(f.id) as facts
+       from topics t left join facts f on f.topic = t.id
+       group by t.id
+       order by facts desc, t.id asc`
+    )
+    .all();
+  if (!counts.length) return { min: 0, median: 0, max: 0, largest: null };
+
+  const sorted = counts.map((row) => row.facts).sort((a, b) => a - b);
+  return {
+    min: sorted[0],
+    median: medianOf(sorted),
+    max: counts[0].facts,
+    largest: counts[0].topic,
+  };
+}
+
+// An even number of topics reports the lower of the two middle counts, so the median is
+// always a count some topic really has rather than an average of two that neither does.
+function medianOf(ascending) {
+  return ascending[Math.floor((ascending.length - 1) / 2)];
+}
+
+function factsAddedSince(db, date) {
+  return db.prepare("select count(*) as facts from facts where date >= ?").get(date).facts;
+}
+
+// A window of N days is N whole local dates, today included, so 7d never means eight. The
+// dates are counted back as dates: subtracting milliseconds would drift an hour over DST.
+function startOfWindow(at, days, timeZone) {
+  const today = Date.parse(`${localDateParts(at, timeZone).date}T${MIDDAY}`);
+  return new Date(today - (days - 1) * A_DAY).toISOString().slice(0, "YYYY-MM-DD".length);
+}
+
+const MIDDAY = "12:00:00Z";
+
 // --- Summarising ---
 
 export function summarizeStatus(
@@ -92,10 +174,11 @@ export function summarizeStatus(
 ) {
   const at = now();
   const extraction = { ...NOTHING_RECORDED, ...readings.extraction };
+  const corpus = { ...NOTHING_INDEXED, ...readings.corpus };
 
   return {
     verdict: verdictFor(extraction, at, staleAfterMs),
-    blocks: [extractionBlock(extraction, at, timeZone)],
+    blocks: [extractionBlock(extraction, at, timeZone), corpusBlock(corpus)],
   };
 }
 
@@ -106,6 +189,17 @@ const NOTHING_RECORDED = {
   lease: null,
   failures: { sessions: 0, attempts: 0 },
   quarantined: 0,
+};
+
+const NOTHING_INDEXED = {
+  topics: 0,
+  facts: 0,
+  prompts: 0,
+  sessions: 0,
+  factsPerTopic: { min: 0, median: 0, max: 0, largest: null },
+  added: GROWTH_WINDOWS_IN_DAYS.map((days) => ({ days, facts: 0 })),
+  refreshMs: null,
+  bytes: null,
 };
 
 function verdictFor(extraction, at, staleAfterMs) {
@@ -175,6 +269,55 @@ function extractionBlock(extraction, at, timeZone) {
   };
 }
 
+function corpusBlock(corpus) {
+  return {
+    title: "CORPUS",
+    rows: [
+      {
+        label: "topics",
+        value: thousands(corpus.topics),
+        rightAligned: true,
+        note: spreadNote(corpus.factsPerTopic),
+      },
+      {
+        label: "facts",
+        value: thousands(corpus.facts),
+        rightAligned: true,
+        note: growthNote(corpus.added),
+      },
+      { label: "prompts", value: thousands(corpus.prompts), rightAligned: true },
+      { label: "sessions", value: thousands(corpus.sessions), rightAligned: true },
+      {
+        label: "index.db",
+        value: megabytes(corpus.bytes),
+        rightAligned: true,
+        note: refreshNote(corpus.refreshMs),
+      },
+    ],
+  };
+}
+
+function spreadNote({ min, median, max, largest }) {
+  const largestNamed = largest ? `${thousands(max)} ${largest}` : thousands(max);
+  return `facts/topic   min ${thousands(min)}  median ${thousands(median)}  max ${largestNamed}`;
+}
+
+function growthNote(added) {
+  const windows = added.map((window) => `${window.days}d ${thousands(window.facts)}`);
+  return `added   ${windows.join("   ")}`;
+}
+
+function refreshNote(ms) {
+  return Number.isFinite(ms) ? `refresh took ${Math.round(ms)} ms` : undefined;
+}
+
+const A_MEGABYTE = 1024 * 1024;
+
+function megabytes(bytes) {
+  if (!Number.isFinite(bytes)) return "missing";
+  return `${(bytes / A_MEGABYTE).toFixed(1)} MB`;
+}
+
 const NEVER = "never";
 
 function momentWithAge(ms, at, timeZone) {
@@ -224,6 +367,8 @@ const thousands = (count) => count.toLocaleString("en-US");
 
 const REPORT_WIDTH = 68;
 const LABEL_WIDTH = 21;
+const RIGHT_ALIGNED_WIDTH = 7;
+const VALUE_WIDTH = 15;
 
 export function renderStatus(report) {
   const lines = [verdictLine(report.verdict), ...report.verdict.problems.map((p) => `  ! ${p}`)];
@@ -231,11 +376,16 @@ export function renderStatus(report) {
   for (const block of report.blocks) {
     lines.push("", block.title);
     for (const row of block.rows) {
-      lines.push(`  ${row.label.padEnd(LABEL_WIDTH)}${row.value}`);
+      lines.push(`  ${row.label.padEnd(LABEL_WIDTH)}${valueField(row)}`);
     }
   }
 
   return `${lines.join("\n")}\n`;
+}
+
+function valueField(row) {
+  const value = row.rightAligned ? row.value.padStart(RIGHT_ALIGNED_WIDTH) : row.value;
+  return row.note ? `${value.padEnd(VALUE_WIDTH)}${row.note}` : value;
 }
 
 function verdictLine(verdict) {
@@ -250,14 +400,19 @@ export function renderStatusAsMarkdown(report) {
   }
 
   for (const block of report.blocks) {
-    lines.push("", `## ${block.title}`, "", "| reading | value |", "| --- | --- |");
+    const headings = block.rows.some((row) => row.note)
+      ? ["reading", "value", "note"]
+      : ["reading", "value"];
+    lines.push("", `## ${block.title}`, "", tableRow(headings), tableRow(headings.map(() => "---")));
     for (const row of block.rows) {
-      lines.push(`| ${row.label} | ${row.value} |`);
+      lines.push(tableRow([row.label, row.value, row.note ?? ""].slice(0, headings.length)));
     }
   }
 
   return `${lines.join("\n")}\n`;
 }
+
+const tableRow = (cells) => `| ${cells.join(" | ")} |`;
 
 // --- CLI ---
 

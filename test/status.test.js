@@ -11,9 +11,12 @@ import {
 import { createStateStore, EXTRACTION_LEASE_MS } from "../src/state.js";
 import { EXTRACTION_PROMPT_MARKER, SESSION_IS_IDLE_AFTER_MS } from "../src/sweep.js";
 import {
+  appendPrompts,
+  appendSessions,
   idleFor,
   runCli,
   tempCorpus,
+  writeTopic,
   writeTranscript,
   AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
   STATUS_REPORT,
@@ -60,6 +63,45 @@ function rowValue(report, label) {
   const row = extractionBlock(report).rows.find((candidate) => candidate.label === label);
   assert.ok(row, `the EXTRACTION block should carry a "${label}" row`);
   return row.value;
+}
+
+function corpusRow(report, label) {
+  const block = report.blocks.find((candidate) => candidate.title === "CORPUS");
+  assert.ok(block, "the report should carry a CORPUS block");
+  const row = block.rows.find((candidate) => candidate.label === label);
+  assert.ok(row, `the CORPUS block should carry a "${label}" row`);
+  return row;
+}
+
+function corpusReadings(overrides = {}) {
+  return {
+    corpus: {
+      topics: 59,
+      facts: 3101,
+      prompts: 4882,
+      sessions: 229,
+      factsPerTopic: { min: 4, median: 31, max: 587, largest: "appsync_key_secrets_manager" },
+      added: [
+        { days: 7, facts: 585 },
+        { days: 30, facts: 1204 },
+      ],
+      refreshMs: 61,
+      bytes: 5 * 1024 * 1024,
+      ...overrides,
+    },
+  };
+}
+
+function factsDated(dates) {
+  return dates.map((date) => `- something happened [session:316972f2, ${date}]`);
+}
+
+function localDay(at, daysAgo) {
+  return new Date(at - daysAgo * A_DAY).toISOString().slice(0, "YYYY-MM-DD".length);
+}
+
+function statusOver(config, { at = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK } = {}) {
+  return createStatusReport(config, { timeZone: NEW_YORK, now: () => at }).read();
 }
 
 function idleSessionWithUnreadTurns(config, sessionId) {
@@ -428,6 +470,194 @@ test("reading the status refreshes the index", () => {
   assert.ok(existsSync(config.indexPath));
 });
 
+// --- The corpus block ---
+
+test("the corpus block counts topics, facts, prompts and sessions", () => {
+  const report = summarizeStatus({ ...extractionReadings(), ...corpusReadings() }, {
+    now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
+  });
+
+  assert.equal(corpusRow(report, "topics").value, "59");
+  assert.equal(corpusRow(report, "facts").value, "3,101");
+  assert.equal(corpusRow(report, "prompts").value, "4,882");
+  assert.equal(corpusRow(report, "sessions").value, "229");
+});
+
+test("the facts-per-topic spread names the largest topic beside its count", () => {
+  const report = summarizeStatus({ ...extractionReadings(), ...corpusReadings() }, {
+    now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
+  });
+
+  assert.equal(
+    corpusRow(report, "topics").note,
+    "facts/topic   min 4  median 31  max 587 appsync_key_secrets_manager"
+  );
+});
+
+test("fact growth is reported over both windows, and the index size and refresh beside it", () => {
+  const report = summarizeStatus({ ...extractionReadings(), ...corpusReadings() }, {
+    now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
+  });
+
+  assert.equal(corpusRow(report, "facts").note, "added   7d 585   30d 1,204");
+  assert.equal(corpusRow(report, "index.db").value, "5.0 MB");
+  assert.equal(corpusRow(report, "index.db").note, "refresh took 61 ms");
+});
+
+test("nothing in the corpus block reaches the verdict, however lopsided it reads", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const report = summarizeStatus(
+    {
+      ...extractionReadings({ processed: { count: 4, lastAt: now - A_MINUTE } }),
+      ...corpusReadings({
+        factsPerTopic: { min: 1, median: 2, max: 90_000, largest: "junk_drawer" },
+        added: [
+          { days: 7, facts: 0 },
+          { days: 30, facts: 0 },
+        ],
+        bytes: 4 * 1024 * 1024 * 1024,
+      }),
+    },
+    { now: () => now }
+  );
+
+  assert.equal(report.verdict.label, "healthy");
+  assert.deepEqual(report.verdict.problems, []);
+});
+
+test("an empty corpus renders the block with zeros rather than failing", () => {
+  const config = tempCorpus();
+
+  const report = createStatusReport(config, { timeZone: NEW_YORK }).read();
+
+  assert.equal(corpusRow(report, "topics").value, "0");
+  assert.equal(corpusRow(report, "facts").value, "0");
+  assert.equal(corpusRow(report, "prompts").value, "0");
+  assert.equal(corpusRow(report, "sessions").value, "0");
+  assert.equal(corpusRow(report, "topics").note, "facts/topic   min 0  median 0  max 0");
+  assert.match(corpusRow(report, "facts").note, /^added {3}7d 0 {3}30d 0$/);
+  assert.match(corpusRow(report, "index.db").note, /^refresh took \d+ ms$/);
+});
+
+// --- Index statistics over a fixture corpus ---
+
+test("index statistics count what the fixture corpus holds", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", { Context: factsDated(["2026-08-01", "2026-08-02"]) });
+  writeTopic(config, "appsync_keys", { Decisions: factsDated(["2026-08-03"]) });
+  appendPrompts(config, [{ display: "one" }, { display: "two" }]);
+  appendSessions(config, [{ session_id: "316972f2-1111-2222-3333-444455556666" }]);
+
+  const report = statusOver(config);
+
+  assert.equal(corpusRow(report, "topics").value, "2");
+  assert.equal(corpusRow(report, "facts").value, "3");
+  assert.equal(corpusRow(report, "prompts").value, "2");
+  assert.equal(corpusRow(report, "sessions").value, "1");
+});
+
+test("the spread over a fixture corpus names the largest topic", () => {
+  const config = tempCorpus();
+  writeTopic(config, "small", { Context: factsDated(["2026-08-01"]) });
+  writeTopic(config, "middling", { Context: factsDated(["2026-08-01", "2026-08-02"]) });
+  writeTopic(config, "junk_drawer", {
+    Context: factsDated(["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"]),
+  });
+
+  const report = statusOver(config);
+
+  assert.equal(
+    corpusRow(report, "topics").note,
+    "facts/topic   min 1  median 2  max 4 junk_drawer"
+  );
+});
+
+test("a topic that parsed no facts is counted in the minimum rather than skipped", () => {
+  const config = tempCorpus();
+  writeTopic(config, "empty", {});
+  writeTopic(config, "populated", { Context: factsDated(["2026-08-01", "2026-08-02"]) });
+
+  const report = statusOver(config);
+
+  assert.equal(
+    corpusRow(report, "topics").note,
+    "facts/topic   min 0  median 0  max 2 populated"
+  );
+});
+
+test("an even number of topics reports a median some topic really has", () => {
+  const config = tempCorpus();
+  writeTopic(config, "one", { Context: factsDated(["2026-08-01"]) });
+  writeTopic(config, "four", {
+    Context: factsDated(["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"]),
+  });
+
+  const report = statusOver(config);
+
+  assert.match(corpusRow(report, "topics").note, /median 1 /);
+});
+
+test("facts added are bucketed by fact date against the injected clock", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  writeTopic(config, "growth", {
+    Context: factsDated([
+      localDay(now, 0),
+      localDay(now, 3),
+      localDay(now, 6),
+      localDay(now, 9),
+      localDay(now, 29),
+      localDay(now, 40),
+    ]),
+  });
+
+  const report = statusOver(config, { at: now });
+
+  assert.equal(corpusRow(report, "facts").note, "added   7d 3   30d 5");
+});
+
+test("a window counts back in local dates, so it does not drift an hour over DST", () => {
+  const justAfterLocalMidnightAfterSpringForward = Date.parse("2026-03-10T04:30:00Z");
+  const config = tempCorpus();
+  writeTopic(config, "growth", { Context: factsDated(["2026-03-03", "2026-03-04"]) });
+
+  const report = statusOver(config, { at: justAfterLocalMidnightAfterSpringForward });
+
+  assert.equal(corpusRow(report, "facts").note, "added   7d 1   30d 2");
+});
+
+test("an undated fact counts towards the total but towards no growth window", () => {
+  const config = tempCorpus();
+  writeTopic(config, "undated", { Context: ["- a fact with no date at all"] });
+
+  const report = statusOver(config);
+
+  assert.equal(corpusRow(report, "facts").value, "1");
+  assert.equal(corpusRow(report, "facts").note, "added   7d 0   30d 0");
+});
+
+test("counts past a thousand are separated wherever the block reports them", () => {
+  const report = summarizeStatus(
+    {
+      ...extractionReadings(),
+      ...corpusReadings({
+        factsPerTopic: { min: 1_000, median: 2_000, max: 90_000, largest: "junk_drawer" },
+        added: [
+          { days: 7, facts: 5_000 },
+          { days: 30, facts: 12_000 },
+        ],
+      }),
+    },
+    { now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK }
+  );
+
+  assert.equal(
+    corpusRow(report, "topics").note,
+    "facts/topic   min 1,000  median 2,000  max 90,000 junk_drawer"
+  );
+  assert.equal(corpusRow(report, "facts").note, "added   7d 5,000   30d 12,000");
+});
+
 // --- The command line ---
 
 test("toc-status prints a verdict and the extraction block, and exits 0", () => {
@@ -507,4 +737,31 @@ test("--markdown renders the block as a table under the verdict as a heading", (
   assert.match(report.stdout, /^# claude-toc status: healthy$/m);
   assert.match(report.stdout, /^## EXTRACTION$/m);
   assert.match(report.stdout, /^\| last extraction \| .+ \|$/m);
+});
+
+test("toc-status prints the corpus block with the largest topic named", () => {
+  const config = tempCorpus();
+  writeTopic(config, "small", { Context: factsDated(["2026-08-01"]) });
+  writeTopic(config, "junk_drawer", { Context: factsDated(["2026-08-01", "2026-08-02"]) });
+
+  const report = runCli(STATUS_REPORT, { config });
+
+  assert.equal(report.status, 0);
+  assert.equal(report.stderr, "");
+  assert.match(report.stdout, /^CORPUS$/m);
+  assert.match(report.stdout, /^ {2}topics\s+2\s+facts\/topic\s+min 1\s+median 1\s+max 2 junk_drawer$/m);
+  assert.match(report.stdout, /^ {2}facts\s+3\s+added\s+7d \d+\s+30d \d+$/m);
+  assert.match(report.stdout, /^ {2}index\.db\s+[\d.]+ MB\s+refresh took \d+ ms$/m);
+});
+
+test("--markdown carries the corpus notes in a third column", () => {
+  const config = tempCorpus();
+  writeTopic(config, "junk_drawer", { Context: factsDated(["2026-08-01"]) });
+
+  const report = runCli(STATUS_REPORT, { config, args: ["--markdown"] });
+
+  assert.equal(report.status, 0);
+  assert.match(report.stdout, /^## CORPUS$/m);
+  assert.match(report.stdout, /^\| reading \| value \| note \|$/m);
+  assert.match(report.stdout, /^\| topics \| 1 \| facts\/topic .*max 1 junk_drawer \|$/m);
 });

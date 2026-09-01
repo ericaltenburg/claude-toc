@@ -95,8 +95,9 @@ test("the extractor lists sessions without writing anything", () => {
 });
 
 test("only the config module knows where the corpus is", () => {
+  // A path segment reaches join() as an argument; "topics" alone is free to be a display label.
   const forbidden =
-    /homedir\(|import\.meta\.dirname|__dirname|toc\.json|sessions\.jsonl|state\.json|processed\.json|history\.jsonl|topics\/|"topics"|"memory"/;
+    /homedir\(|import\.meta\.dirname|__dirname|toc\.json|sessions\.jsonl|state\.json|processed\.json|history\.jsonl|topics\/|,\s*"topics"|"memory"/;
 
   const offenders = [];
   for (const relative of trackedSources()) {
