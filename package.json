@@ -13,7 +13,8 @@
     "search": "./bin/toc-search",
     "extract": "./bin/toc-extract",
     "smoke": "./bin/toc-search --smoke",
-    "spend": "./bin/toc-spend"
+    "spend": "./bin/toc-spend",
+    "status": "./bin/toc-status"
   },
   "dependencies": {},
   "engines": {
