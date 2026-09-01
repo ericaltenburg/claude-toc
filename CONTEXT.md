@@ -28,7 +28,9 @@ One subject, stored as one markdown file. A topic holds many facts and carries a
 summary and keywords. Topic is a **label and provenance on a fact**, not a thing
 that gets retrieved on its own.
 
-Topic size is not bounded: topics range from 4 to 347 facts.
+Topic size is not bounded: topics range from a handful of facts to several hundred.
+The spread is wide enough that the largest topic is worth watching, because a topic
+that accumulates without end stops being one subject.
 
 ## Section
 
@@ -125,9 +127,25 @@ failure mode this project exists to correct.
 Deciding which sessions are ready for extraction and starting it. A sweep reads
 session state and never speaks to the user.
 
+## Waiting session
+
+A session a sweep would choose: idle long enough to be finished with, carrying turns
+extraction has not read, and not quarantined. Waiting sessions are the queue, and
+their count is how the write path's backlog is observed.
+
 ## Extraction lease
 
 The right to be the one process extracting. Held by a **holder**, which is whoever
 took it: a sweep names itself by the identifier it will spawn the extraction under,
 which is not yet a session's. A lease expires, so a crashed holder cannot block
 extraction forever.
+
+## Status
+
+One reading of everything already recorded: what extraction has done, what the corpus
+holds, how often search runs, and what it cost. Status reads and never repairs.
+
+Status carries a **verdict**, which names only what is **blocked** — work that exists
+and is not getting done. A recorded failure the system has already recovered from is
+reported but does not reach the verdict. Absence of activity is not blockage: a quiet
+week is healthy. Having never run is its own verdict, distinct from healthy.
