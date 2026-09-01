@@ -9,6 +9,7 @@ import {
   summarizeStatus,
   EXTRACTION_IS_STALE_AFTER_MS,
 } from "../src/status.js";
+import { createSpendLog } from "../src/spend.js";
 import { createStateStore, EXTRACTION_LEASE_MS } from "../src/state.js";
 import { EXTRACTION_PROMPT_MARKER, SESSION_IS_IDLE_AFTER_MS } from "../src/sweep.js";
 import {
@@ -20,6 +21,7 @@ import {
   writeTopic,
   writeTranscript,
   AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
+  LATE_ON_26_AUGUST_IN_NEW_YORK,
   STATUS_REPORT,
 } from "./support/corpus.js";
 
@@ -862,6 +864,230 @@ test("--markdown gives the search block one column per window", () => {
   assert.match(report.stdout, /^## SEARCH$/m);
   assert.match(report.stdout, /^\| reading \| 7d \| 30d \| all-time \|$/m);
   assert.match(report.stdout, /^\| automatic \| 1 \| 1 \| 1 \|$/m);
+});
+
+// --- The spend block ---
+
+const SONNET = "global.anthropic.claude-sonnet-5";
+
+function spendBlock(report) {
+  const block = report.blocks.find((candidate) => candidate.title === "SPEND");
+  assert.ok(block, "the report should carry a SPEND block");
+  return block;
+}
+
+function spendRow(report, label) {
+  const row = spendBlock(report).rows.find((candidate) => candidate.label === label);
+  assert.ok(row, `the SPEND block should carry a "${label}" row`);
+  return row;
+}
+
+function appendCalls(config, calls) {
+  mkdirSync(config.corpusDir, { recursive: true });
+  appendFileSync(config.spendLogPath, calls.map((call) => `${JSON.stringify(call)}\n`).join(""));
+}
+
+function called({ localDate, model = SONNET, inputTokens = 1_000_000, outputTokens = 100_000 }) {
+  return {
+    ts: `${localDate}T15:00:00.000Z`,
+    localDate,
+    session: "316972f2",
+    model,
+    inputTokens,
+    outputTokens,
+  };
+}
+
+test("the spend block reports calls and dollars over seven days, thirty days and all time", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  appendCalls(config, [
+    called({ localDate: localDay(now, 0) }),
+    called({ localDate: localDay(now, 20) }),
+    called({ localDate: localDay(now, 100) }),
+  ]);
+
+  const report = statusOver(config, { at: now });
+
+  assert.deepEqual(spendBlock(report).columns, ["7d", "30d", "all-time"]);
+  assert.deepEqual(spendRow(report, "calls").values, ["1", "2", "3"]);
+  assert.deepEqual(spendRow(report, "estimated").values, ["$4.50", "$9.00", "$13.50"]);
+});
+
+test("the spend block is the last block on the report", () => {
+  const report = statusOver(tempCorpus());
+
+  assert.deepEqual(
+    report.blocks.map((block) => block.title),
+    ["EXTRACTION", "CORPUS", "SEARCH", "SPEND"]
+  );
+});
+
+test("calls whose model has no rate are counted per window and left out of the dollars", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  appendCalls(config, [
+    called({ localDate: localDay(now, 0), model: "some.unlisted.model" }),
+    called({ localDate: localDay(now, 100), model: "some.unlisted.model" }),
+    called({ localDate: localDay(now, 0) }),
+  ]);
+
+  const report = statusOver(config, { at: now });
+
+  assert.deepEqual(spendRow(report, "unpriced").values, ["1", "1", "2"]);
+  assert.deepEqual(spendRow(report, "calls").values, ["2", "2", "3"]);
+  assert.deepEqual(spendRow(report, "estimated").values, ["$4.50", "$4.50", "$4.50"]);
+});
+
+test("a call made late in the local evening falls in the local day it was recorded on", () => {
+  const config = tempCorpus();
+  createSpendLog(config, {
+    timeZone: NEW_YORK,
+    now: () => LATE_ON_26_AUGUST_IN_NEW_YORK,
+  }).record({ model: SONNET, inputTokens: 1_000_000, outputTokens: 100_000 });
+
+  // The seven-day window opens on 2026-08-27, and the call was made on the 26th in New
+  // York even though its timestamp is already the 27th in UTC.
+  const report = statusOver(config, { at: Date.parse("2026-09-02T15:00:00Z") });
+
+  assert.deepEqual(spendRow(report, "calls").values, ["0", "1", "1"]);
+});
+
+test("a spend window counts back in local dates across a daylight-saving boundary", () => {
+  const justAfterLocalMidnightAfterSpringForward = Date.parse("2026-03-10T04:30:00Z");
+  const config = tempCorpus();
+  appendCalls(config, [
+    called({ localDate: "2026-03-04" }),
+    called({ localDate: "2026-03-03" }),
+  ]);
+
+  const report = statusOver(config, { at: justAfterLocalMidnightAfterSpringForward });
+
+  assert.deepEqual(spendRow(report, "calls").values, ["1", "2", "2"]);
+});
+
+test("a call with no local date on it falls in no window but still counts all-time", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  appendCalls(config, [{ model: SONNET, inputTokens: 1_000_000, outputTokens: 100_000 }]);
+
+  const report = statusOver(config, { at: now });
+
+  assert.deepEqual(spendRow(report, "calls").values, ["0", "0", "1"]);
+});
+
+test("a malformed line in the spend log is skipped rather than breaking the report", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  mkdirSync(config.corpusDir, { recursive: true });
+  appendFileSync(
+    config.spendLogPath,
+    `${JSON.stringify(called({ localDate: localDay(now, 0) }))}\n{ not json\n`
+  );
+
+  const report = statusOver(config, { at: now });
+
+  assert.deepEqual(spendRow(report, "calls").values, ["1", "1", "1"]);
+});
+
+test("an amount too small for cents is reported the way the spend report reports it", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  appendCalls(config, [
+    called({ localDate: localDay(now, 0), inputTokens: 1_000, outputTokens: 0 }),
+  ]);
+
+  const report = statusOver(config, { at: now });
+
+  assert.deepEqual(spendRow(report, "estimated").values, ["$0.0030", "$0.0030", "$0.0030"]);
+});
+
+test("an absent spend log renders the block with zeros rather than failing", () => {
+  const config = tempCorpus();
+
+  const report = statusOver(config);
+
+  assert.deepEqual(spendRow(report, "calls").values, ["0", "0", "0"]);
+  assert.deepEqual(spendRow(report, "estimated").values, ["$0.00", "$0.00", "$0.00"]);
+  assert.deepEqual(spendRow(report, "unpriced").values, ["0", "0", "0"]);
+});
+
+test("the spend block names the bill it lands on and where to override the rates", () => {
+  const config = tempCorpus();
+
+  const block = spendBlock(statusOver(config));
+
+  assert.deepEqual(block.footer, [
+    "Billed to the AWS profile claudecode in us-west-2.",
+    `Rates are list prices; edit ${config.modelRatesPath} to match your bill.`,
+  ]);
+});
+
+test("nothing in the spend block reaches the verdict, however much went unpriced", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  createStateStore(config).recordExtraction("316972f2-1111-2222-3333-444455556666");
+  appendCalls(
+    config,
+    Array.from({ length: 20 }, () =>
+      called({ localDate: localDay(now, 0), model: "some.unlisted.model" })
+    )
+  );
+
+  const report = statusOver(config, { at: now });
+
+  assert.equal(report.verdict.label, "healthy");
+  assert.deepEqual(report.verdict.problems, []);
+});
+
+test("a dollar amount too wide for its column keeps the column's right edge", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const config = tempCorpus();
+  appendCalls(config, [
+    called({ localDate: localDay(now, 0), inputTokens: 400_000_000, outputTokens: 0 }),
+  ]);
+
+  const lines = renderStatus(statusOver(config, { at: now })).split("\n");
+  const heading = lines.findIndex((line) => line.startsWith("SPEND"));
+  const block = lines.slice(heading, heading + 4);
+
+  assert.match(block[2], /^ {2}estimated\s+\$1200\.00\s+\$1200\.00\s+\$1200\.00$/);
+  assert.deepEqual(new Set(block.map((line) => line.length)).size, 1);
+});
+
+test("toc-status prints the spend block in the same columns as the search block", () => {
+  const config = tempCorpus();
+  createSpendLog(config).record({
+    model: SONNET,
+    sessionId: "316972f2",
+    inputTokens: 1_000_000,
+    outputTokens: 100_000,
+  });
+
+  const report = runCli(STATUS_REPORT, { config });
+
+  assert.equal(report.status, 0);
+  assert.equal(report.stderr, "");
+  assert.match(report.stdout, /^SPEND\s+7d\s+30d\s+all-time$/m);
+  assert.match(report.stdout, /^ {2}calls\s+1\s+1\s+1$/m);
+  assert.match(report.stdout, /^ {2}estimated(\s+\$4\.50){3}$/m);
+  assert.match(report.stdout, /^ {2}unpriced\s+0\s+0\s+0$/m);
+  assert.match(report.stdout, /^Billed to the AWS profile claudecode in us-west-2\.$/m);
+  assert.match(report.stdout, /^Rates are list prices; edit \S+model-rates\.json to match your bill\.$/m);
+});
+
+test("--markdown gives the spend block one column per window and keeps the footer", () => {
+  const config = tempCorpus();
+  createSpendLog(config).record({ model: SONNET, inputTokens: 1_000_000, outputTokens: 100_000 });
+
+  const report = runCli(STATUS_REPORT, { config, args: ["--markdown"] });
+
+  assert.equal(report.status, 0);
+  assert.match(report.stdout, /^## SPEND$/m);
+  assert.match(report.stdout, /^\| calls \| 1 \| 1 \| 1 \|$/m);
+  assert.match(report.stdout, /^\| estimated \| \$4\.50 \| \$4\.50 \| \$4\.50 \|$/m);
+  assert.match(report.stdout, /^\| unpriced \| 0 \| 0 \| 0 \|$/m);
+  assert.match(report.stdout, /^Billed to the AWS profile claudecode in us-west-2\.$/m);
 });
 
 // --- The command line ---

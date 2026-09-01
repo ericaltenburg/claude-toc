@@ -58,6 +58,8 @@ function parsedOrNull(line) {
   }
 }
 
+export const UNDATED = "undated";
+
 const A_MILLION = 1_000_000;
 
 export function estimatedCost(call, rates) {
@@ -77,7 +79,7 @@ export function summarizeSpend(calls, rates = LIST_RATES_PER_MILLION_TOKENS) {
   for (const call of calls) {
     for (const tally of [
       total,
-      tallyFor(byDay, call.localDate ?? "undated"),
+      tallyFor(byDay, call.localDate ?? UNDATED),
       tallyFor(byModel, call.model ?? "unknown"),
       tallyFor(bySession, call.session ?? "unattributed"),
     ]) {
@@ -113,11 +115,13 @@ function sortedTallies(tallies) {
   return [...tallies.values()].sort((a, b) => b.cost - a.cost || String(a.key).localeCompare(String(b.key)));
 }
 
+const CENTS_ARE_TOO_COARSE_BELOW = 0.01;
+
+export const dollars = (amount) =>
+  `$${amount.toFixed(amount > 0 && amount < CENTS_ARE_TOO_COARSE_BELOW ? 4 : 2)}`;
+
 // --- CLI ---
 
-const CENTS_ARE_TOO_COARSE_BELOW = 0.01;
-const dollars = (amount) =>
-  `$${amount.toFixed(amount > 0 && amount < CENTS_ARE_TOO_COARSE_BELOW ? 4 : 2)}`;
 const thousands = (count) => count.toLocaleString("en-US");
 
 function reportSection(title, tallies) {

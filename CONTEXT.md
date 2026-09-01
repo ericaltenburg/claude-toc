@@ -118,6 +118,10 @@ What extraction cost, recorded per model call: the tokens in and out, the model,
 the session the call was extracting. Tokens are measured; dollars are an estimate from
 a rate table, because rates are not something this project can observe.
 
+A call is **unpriced** when its model has no entry in the rate table. Its tokens
+are counted and its dollars are not, so unpriced calls are how far the estimate
+falls short of the bill. An unpriced call is a caveat on a number, never blockage.
+
 Spend is a record of the write path only. Search costs nothing.
 
 ## Quarantine

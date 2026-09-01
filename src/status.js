@@ -6,6 +6,7 @@ import { createConfig } from "./config.js";
 import { localDateParts } from "./parse.js";
 import { searchLogEntries, SOURCES } from "./search.js";
 import { openIndex } from "./search-index.js";
+import { createSpendLog, dollars, UNDATED } from "./spend.js";
 import { createStateStore } from "./state.js";
 import { createSweeper } from "./sweep.js";
 
@@ -25,25 +26,45 @@ export function createStatusReport(
   config,
   { now = () => Date.now(), timeZone, staleAfterMs } = {}
 ) {
+  // One instant for the whole report, so a run just before local midnight cannot bucket
+  // one block in yesterday and the next in today.
   function read() {
+    const at = now();
     return summarizeStatus(
-      { extraction: extractionReadings(), corpus: corpusReadings(), search: searchReadings() },
-      { now, timeZone, staleAfterMs }
+      {
+        extraction: extractionReadings(),
+        corpus: corpusReadings(at),
+        search: searchReadings(at),
+        spend: spendReadings(at),
+      },
+      { now: () => at, timeZone, staleAfterMs }
     );
   }
 
-  function searchReadings() {
-    return summarizeSearchLog(searchLogEntries(config), { at: now(), timeZone });
+  function spendReadings(at) {
+    const spend = createSpendLog(config, { timeZone });
+    return {
+      windows: spendWindows(spend.summarize(), { at, timeZone }),
+      billedTo: {
+        profile: config.awsProfile,
+        region: config.awsRegion,
+        ratesPath: config.modelRatesPath,
+      },
+    };
   }
 
-  function corpusReadings() {
+  function searchReadings(at) {
+    return summarizeSearchLog(searchLogEntries(config), { at, timeZone });
+  }
+
+  function corpusReadings(at) {
     const index = openIndex(config, { timeZone });
     try {
       const startedAt = performance.now();
       index.refresh();
       const refreshMs = performance.now() - startedAt;
       return {
-        ...indexStatistics(index.db, { at: now(), timeZone }),
+        ...indexStatistics(index.db, { at, timeZone }),
         refreshMs,
         bytes: bytesOnDiskOrNull(config.indexPath),
       };
@@ -170,13 +191,22 @@ function startOfWindow(at, days, timeZone) {
 
 const MIDDAY = "12:00:00Z";
 
+// One list, so two blocks reporting across windows cannot come to report different ones.
+const ALL_TIME = null;
+const REPORTING_WINDOWS = [7, 30, ALL_TIME];
+
+function within(localDate, since) {
+  if (since === ALL_TIME) return true;
+  return localDate !== null && localDate >= since;
+}
+
 // --- The search log ---
 
 // The search log stores an ISO timestamp and no local date, unlike the spend log. Per ADR
 // 0005 the windows are local days, so the local date is derived here and the log is left
 // exactly as the read path writes it.
 export function summarizeSearchLog(entries, { at = Date.now(), timeZone } = {}) {
-  const windows = SEARCH_WINDOWS.map((days) => ({
+  const windows = REPORTING_WINDOWS.map((days) => ({
     days,
     since: days === ALL_TIME ? null : startOfWindow(at, days, timeZone),
   }));
@@ -202,24 +232,45 @@ export function summarizeSearchLog(entries, { at = Date.now(), timeZone } = {}) 
     tallies: tallies.map(({ label, matches }) => ({
       label,
       counts: windows.map(
-        ({ since }) => counted.filter((entry) => matches(entry) && within(entry, since)).length
+        ({ since }) =>
+          counted.filter((entry) => matches(entry) && within(entry.localDate, since)).length
       ),
     })),
   };
-}
-
-const ALL_TIME = null;
-const SEARCH_WINDOWS = [7, 30, ALL_TIME];
-
-function within(entry, since) {
-  if (since === ALL_TIME) return true;
-  return entry.localDate !== null && entry.localDate >= since;
 }
 
 function localDateOrNull(isoTimestamp, timeZone) {
   const ms = millisecondsOrNull(isoTimestamp);
   return ms === null ? null : localDateParts(ms, timeZone).date;
 }
+
+// --- Spend ---
+
+// Spend records carry the local date they were made on, so the windows are re-bucketed
+// from the spend summariser's by-day tallies rather than derived here a second time.
+function spendWindows({ total, byDay }, { at, timeZone }) {
+  return REPORTING_WINDOWS.map((days) => ({
+    days,
+    ...tallied(days === ALL_TIME ? [total] : byDay.filter(dated(at, days, timeZone))),
+  }));
+}
+
+// A call recorded without a local date belongs to no window, and its key is not a date at
+// all, so comparing it as one would put it in every window.
+function dated(at, days, timeZone) {
+  const since = startOfWindow(at, days, timeZone);
+  return (day) => day.key !== UNDATED && within(day.key, since);
+}
+
+function tallied(tallies) {
+  return {
+    calls: totalOf(tallies, "calls"),
+    cost: totalOf(tallies, "cost"),
+    unpriced: totalOf(tallies, "unpriced"),
+  };
+}
+
+const totalOf = (tallies, field) => tallies.reduce((total, tally) => total + tally[field], 0);
 
 // --- Summarising ---
 
@@ -231,10 +282,16 @@ export function summarizeStatus(
   const extraction = { ...NOTHING_RECORDED, ...readings.extraction };
   const corpus = { ...NOTHING_INDEXED, ...readings.corpus };
   const search = readings.search ?? summarizeSearchLog([], { at, timeZone });
+  const spend = { ...NOTHING_SPENT, ...readings.spend };
 
   return {
     verdict: verdictFor(extraction, at, staleAfterMs),
-    blocks: [extractionBlock(extraction, at, timeZone), corpusBlock(corpus), searchBlock(search)],
+    blocks: [
+      extractionBlock(extraction, at, timeZone),
+      corpusBlock(corpus),
+      searchBlock(search),
+      spendBlock(spend),
+    ],
   };
 }
 
@@ -256,6 +313,11 @@ const NOTHING_INDEXED = {
   added: GROWTH_WINDOWS_IN_DAYS.map((days) => ({ days, facts: 0 })),
   refreshMs: null,
   bytes: null,
+};
+
+const NOTHING_SPENT = {
+  windows: REPORTING_WINDOWS.map((days) => ({ days, calls: 0, cost: 0, unpriced: 0 })),
+  billedTo: null,
 };
 
 function verdictFor(extraction, at, staleAfterMs) {
@@ -364,6 +426,27 @@ function searchBlock(search) {
   };
 }
 
+function spendBlock({ windows, billedTo }) {
+  return {
+    title: "SPEND",
+    columns: windows.map(windowHeading),
+    rows: [
+      { label: "calls", values: windows.map((window) => thousands(window.calls)) },
+      { label: "estimated", values: windows.map((window) => dollars(window.cost)) },
+      { label: "unpriced", values: windows.map((window) => thousands(window.unpriced)) },
+    ],
+    footer: whoseBillThisIs(billedTo),
+  };
+}
+
+function whoseBillThisIs(billedTo) {
+  if (!billedTo) return [];
+  return [
+    `Billed to the AWS profile ${billedTo.profile} in ${billedTo.region}.`,
+    `Rates are list prices; edit ${billedTo.ratesPath} to match your bill.`,
+  ];
+}
+
 const windowHeading = ({ days }) => (days === ALL_TIME ? "all-time" : `${days}d`);
 
 function spreadNote({ min, median, max, largest }) {
@@ -446,8 +529,9 @@ export function renderStatus(report) {
   for (const block of report.blocks) {
     lines.push("", heading(block));
     for (const row of block.rows) {
-      lines.push(`  ${row.label.padEnd(LABEL_WIDTH)}${valueField(row)}`);
+      lines.push(rowLine(row));
     }
+    if (block.footer?.length) lines.push("", ...block.footer);
   }
 
   return `${lines.join("\n")}\n`;
@@ -457,22 +541,32 @@ const inColumnLayout = (block) => Boolean(block.columns);
 
 function heading(block) {
   if (!inColumnLayout(block)) return block.title;
-  return `${block.title.padEnd(LABEL_WIDTH + INDENT)}${inColumns(block.columns)}`;
+  return inColumns(block.title, block.columns);
 }
 
-function valueField(row) {
-  if (row.values) return inColumns(row.values);
+function rowLine(row) {
+  if (row.values) return inColumns(`  ${row.label}`, row.values);
+  const label = `  ${row.label.padEnd(LABEL_WIDTH)}`;
   const value = row.rightAligned ? row.value.padStart(RIGHT_ALIGNED_WIDTH) : row.value;
-  return row.note ? `${value.padEnd(VALUE_WIDTH)}${row.note}` : value;
+  return label + (row.note ? `${value.padEnd(VALUE_WIDTH)}${row.note}` : value);
 }
 
 const INDENT = 2;
 const A_COLUMN_PAST_THE_NAMED_WIDTHS = COLUMN_WIDTHS.at(-1);
 
-function inColumns(cells) {
-  return cells
-    .map((cell, i) => cell.padStart(COLUMN_WIDTHS[i] ?? A_COLUMN_PAST_THE_NAMED_WIDTHS))
-    .join("");
+// Cells are placed against their column's right edge, so a cell too wide for its column
+// eats into the gutter to its left rather than pushing every column after it along. A
+// dollar amount and a call count then line up down the block whatever their widths.
+function inColumns(label, cells) {
+  return cells.reduce((line, cell, i) => line.padEnd(rightEdgeOf(i) - cell.length) + cell, label);
+}
+
+function rightEdgeOf(column) {
+  const widths = Array.from(
+    { length: column + 1 },
+    (_, i) => COLUMN_WIDTHS[i] ?? A_COLUMN_PAST_THE_NAMED_WIDTHS
+  );
+  return LABEL_WIDTH + INDENT + widths.reduce((total, width) => total + width, 0);
 }
 
 function verdictLine(verdict) {
@@ -493,6 +587,7 @@ export function renderStatusAsMarkdown(report) {
       const values = row.values ?? [row.value, row.note ?? ""];
       lines.push(tableRow([row.label, ...values].slice(0, headings.length)));
     }
+    if (block.footer?.length) lines.push("", ...block.footer);
   }
 
   return `${lines.join("\n")}\n`;
