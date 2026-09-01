@@ -515,7 +515,7 @@ test("the facts-per-topic spread is a row of its own, and the largest topic anot
     now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
   });
 
-  assert.equal(corpusRow(report, "facts per topic").value, "min 4    median 31    max 587");
+  assert.deepEqual(corpusRow(report, "facts per topic").values, ["min 4", "median 31", "max 587"]);
   assert.equal(corpusRow(report, "largest topic").value, "appsync_key_secrets_manager");
 });
 
@@ -524,8 +524,8 @@ test("fact growth is reported over both windows, and the index size and refresh 
     now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
   });
 
-  assert.equal(corpusRow(report, "facts added").value, "7d 585    30d 1,204");
-  assert.equal(corpusRow(report, "index.db").value, "5.0 MB    refresh took 61 ms");
+  assert.deepEqual(corpusRow(report, "facts added").values, ["7d 585", "30d 1,204"]);
+  assert.deepEqual(corpusRow(report, "index.db").values, ["5.0 MB", "refresh took 61 ms"]);
 });
 
 test("nothing in the corpus block reaches the verdict, however lopsided it reads", () => {
@@ -558,10 +558,11 @@ test("an empty corpus renders the block with zeros rather than failing", () => {
   assert.equal(corpusRow(report, "facts").value, "0");
   assert.equal(corpusRow(report, "prompts").value, "0");
   assert.equal(corpusRow(report, "sessions").value, "0");
-  assert.equal(corpusRow(report, "facts per topic").value, "min 0    median 0    max 0");
+  assert.deepEqual(corpusRow(report, "facts per topic").values, ["min 0", "median 0", "max 0"]);
   assert.equal(corpusRow(report, "largest topic").value, "none");
-  assert.equal(corpusRow(report, "facts added").value, "7d 0    30d 0");
-  assert.match(corpusRow(report, "index.db").value, /^[\d.]+ MB {4}refresh took \d+ ms$/);
+  assert.deepEqual(corpusRow(report, "facts added").values, ["7d 0", "30d 0"]);
+  assert.match(corpusRow(report, "index.db").values[0], /^[\d.]+ MB$/);
+  assert.match(corpusRow(report, "index.db").values[1], /^refresh took \d+ ms$/);
 });
 
 // --- Index statistics over a fixture corpus ---
@@ -591,7 +592,7 @@ test("the spread over a fixture corpus names the largest topic", () => {
 
   const report = statusOver(config);
 
-  assert.equal(corpusRow(report, "facts per topic").value, "min 1    median 2    max 4");
+  assert.deepEqual(corpusRow(report, "facts per topic").values, ["min 1", "median 2", "max 4"]);
   assert.equal(corpusRow(report, "largest topic").value, "junk_drawer");
 });
 
@@ -602,7 +603,7 @@ test("a topic that parsed no facts is counted in the minimum rather than skipped
 
   const report = statusOver(config);
 
-  assert.equal(corpusRow(report, "facts per topic").value, "min 0    median 0    max 2");
+  assert.deepEqual(corpusRow(report, "facts per topic").values, ["min 0", "median 0", "max 2"]);
   assert.equal(corpusRow(report, "largest topic").value, "populated");
 });
 
@@ -615,7 +616,7 @@ test("an even number of topics reports a median some topic really has", () => {
 
   const report = statusOver(config);
 
-  assert.match(corpusRow(report, "facts per topic").value, /median 1 /);
+  assert.equal(corpusRow(report, "facts per topic").values[1], "median 1");
 });
 
 test("facts added are bucketed by fact date against the injected clock", () => {
@@ -634,7 +635,7 @@ test("facts added are bucketed by fact date against the injected clock", () => {
 
   const report = statusOver(config, { at: now });
 
-  assert.equal(corpusRow(report, "facts added").value, "7d 3    30d 5");
+  assert.deepEqual(corpusRow(report, "facts added").values, ["7d 3", "30d 5"]);
 });
 
 test("a window counts back in local dates, so it does not drift an hour over DST", () => {
@@ -644,7 +645,7 @@ test("a window counts back in local dates, so it does not drift an hour over DST
 
   const report = statusOver(config, { at: justAfterLocalMidnightAfterSpringForward });
 
-  assert.equal(corpusRow(report, "facts added").value, "7d 1    30d 2");
+  assert.deepEqual(corpusRow(report, "facts added").values, ["7d 1", "30d 2"]);
 });
 
 test("an undated fact counts towards the total but towards no growth window", () => {
@@ -654,7 +655,7 @@ test("an undated fact counts towards the total but towards no growth window", ()
   const report = statusOver(config);
 
   assert.equal(corpusRow(report, "facts").value, "1");
-  assert.equal(corpusRow(report, "facts added").value, "7d 0    30d 0");
+  assert.deepEqual(corpusRow(report, "facts added").values, ["7d 0", "30d 0"]);
 });
 
 test("counts past a thousand are separated wherever the block reports them", () => {
@@ -672,11 +673,12 @@ test("counts past a thousand are separated wherever the block reports them", () 
     { now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK }
   );
 
-  assert.equal(
-    corpusRow(report, "facts per topic").value,
-    "min 1,000    median 2,000    max 90,000"
-  );
-  assert.equal(corpusRow(report, "facts added").value, "7d 5,000    30d 12,000");
+  assert.deepEqual(corpusRow(report, "facts per topic").values, [
+    "min 1,000",
+    "median 2,000",
+    "max 90,000",
+  ]);
+  assert.deepEqual(corpusRow(report, "facts added").values, ["7d 5,000", "30d 12,000"]);
 });
 
 // --- The search block ---
@@ -1358,8 +1360,31 @@ test("toc-status prints the corpus block with the largest topic on a row of its 
   assert.equal(report.stderr, "");
   assert.match(report.stdout, /^┌─ CORPUS ─+/m);
   assert.match(report.stdout, /^│ topics +│ 2 +│$/m);
-  assert.match(report.stdout, /^│ facts per topic +│ min 1 {4}median 1 {4}max 2 +│$/m);
   assert.match(report.stdout, /^│ largest topic +│ junk_drawer +│$/m);
-  assert.match(report.stdout, /^│ facts added +│ 7d \d+ {4}30d \d+ +│$/m);
-  assert.match(report.stdout, /^│ index\.db +│ [\d.]+ MB {4}refresh took \d+ ms +│$/m);
+});
+
+test("a reading made of several readings gets a cell each, divided by a wall", () => {
+  const config = tempCorpus();
+  writeTopic(config, "small", { Context: factsDated(["2026-08-01"]) });
+  writeTopic(config, "junk_drawer", { Context: factsDated(["2026-08-01", "2026-08-02"]) });
+
+  const report = runCli(STATUS_REPORT, { config });
+
+  assert.match(report.stdout, /^│ facts per topic +│ min 1 +│ median 1 +│ max 2 +│$/m);
+  assert.match(report.stdout, /^│ facts added +│ 7d \d+ +│ 30d \d+ +│$/m);
+  assert.match(report.stdout, /^│ index\.db +│ [\d.]+ MB +│ refresh took \d+ ms +│$/m);
+});
+
+test("the rule between rows that divide differently opens and closes each wall", () => {
+  const config = tempCorpus();
+  writeTopic(config, "junk_drawer", { Context: factsDated(["2026-08-01"]) });
+
+  const report = runCli(STATUS_REPORT, { config });
+  const lines = report.stdout.split("\n");
+  const dividedRow = lines.findIndex((line) => line.startsWith("│ facts per topic"));
+
+  // The rule above a three-cell row opens two walls the row before it did not have; the one
+  // below closes them again, because the row after it is undivided.
+  assert.match(lines[dividedRow - 1], /┬.+┬/);
+  assert.match(lines[dividedRow + 1], /┴.+┴/);
 });

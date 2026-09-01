@@ -429,12 +429,12 @@ function corpusBlock(corpus) {
     rows: [
       { label: "topics", value: thousands(corpus.topics) },
       { label: "facts", value: thousands(corpus.facts) },
-      { label: "facts added", value: growthValue(corpus.added) },
-      { label: "facts per topic", value: spreadValue(corpus.factsPerTopic) },
+      { label: "facts added", values: growthCells(corpus.added) },
+      { label: "facts per topic", values: spreadCells(corpus.factsPerTopic) },
       { label: "largest topic", value: corpus.factsPerTopic.largest ?? NONE },
       { label: "prompts", value: thousands(corpus.prompts) },
       { label: "sessions", value: thousands(corpus.sessions) },
-      { label: "index.db", value: indexFileValue(corpus) },
+      { label: "index.db", values: indexFileCells(corpus) },
     ],
   };
 }
@@ -494,21 +494,20 @@ const windowHeading = ({ days }) => (days === ALL_TIME ? "all-time" : `${days}d`
 
 // Two readings of one subject share a row where neither is worth a row of its own. The gap
 // between them is wide enough to read as two readings and not as one sentence.
-const BESIDE = "    ";
-
-function spreadValue({ min, median, max }) {
-  return [`min ${thousands(min)}`, `median ${thousands(median)}`, `max ${thousands(max)}`].join(
-    BESIDE
-  );
+// A reading made of several readings gets a cell each, so the eye lands on one number at a
+// time instead of parsing a run of words. Each cell says what it holds, because the cells of
+// one row do not mean the same kind of thing and no header could name them all.
+function spreadCells({ min, median, max }) {
+  return [`min ${thousands(min)}`, `median ${thousands(median)}`, `max ${thousands(max)}`];
 }
 
-function growthValue(added) {
-  return added.map((window) => `${window.days}d ${thousands(window.facts)}`).join(BESIDE);
+function growthCells(added) {
+  return added.map((window) => `${window.days}d ${thousands(window.facts)}`);
 }
 
-function indexFileValue({ bytes, refreshMs }) {
+function indexFileCells({ bytes, refreshMs }) {
   const refresh = Number.isFinite(refreshMs) ? `refresh took ${Math.round(refreshMs)} ms` : null;
-  return [megabytes(bytes), refresh].filter(Boolean).join(BESIDE);
+  return [megabytes(bytes), refresh].filter(Boolean);
 }
 
 const A_MEGABYTE = 1024 * 1024;
@@ -597,7 +596,7 @@ const inColumnLayout = (block) => Boolean(block.columns);
 // most worth having.
 function layoutFor(blocks) {
   const columns = countedColumns(blocks);
-  const readingWidth = widest(blocks.filter(isKeyValueBlock).flatMap(readingsIn)) + PADDING;
+  const readingWidth = Math.max(0, ...blocks.filter(isKeyValueBlock).map(readingRoomFor));
   const cellWidth = widest(blocks.filter(inColumnLayout).flatMap(cellsIn)) + PADDING;
   const columnWidth = columns
     ? Math.max(cellWidth, Math.ceil((readingWidth - (columns - 1)) / columns))
@@ -620,8 +619,25 @@ function countedColumns(blocks) {
 }
 
 const isKeyValueBlock = (block) => !inColumnLayout(block);
-const readingsIn = (block) => block.rows.map((row) => row.value);
 const cellsIn = (block) => [...block.columns, ...block.rows.flatMap((row) => row.values)];
+
+// A row that divides its reading into cells needs room for the widest of them in every cell,
+// plus the walls that come to stand between them.
+const readingRoomFor = (block) => Math.max(...block.rows.map(readingRoomForRow));
+
+function readingRoomForRow(row) {
+  if (!row.values) return row.value.length + PADDING;
+  return spannedBy(row.values.length, widest(row.values) + PADDING);
+}
+
+// The cells of a divided row are equal to each other, so a row reads as evenly weighed. Any
+// character left over by the division goes to the leftmost cells.
+function evenlySplit(width, count) {
+  const room = width - (count - 1);
+  const each = Math.floor(room / count);
+  const leftOver = room % count;
+  return Array.from({ length: count }, (_, i) => each + (i < leftOver ? 1 : 0));
+}
 
 // The title sits in the top border of the label column, so a long title widens that column
 // the way a long label does.
@@ -633,20 +649,31 @@ function spannedBy(count, width) {
   return count * width + (count - 1);
 }
 
-function columnWidthsFor(block, { labelWidth, valueWidth, columnWidth }) {
-  if (isKeyValueBlock(block)) return [labelWidth, valueWidth];
-  return [labelWidth, ...block.columns.map(() => columnWidth)];
-}
-
 // Labels and key-value readings are left-aligned; a windowed block's cells are right-
-// aligned, because a column exists to be compared down its right edge.
-function cellRowsFor(block) {
-  if (!inColumnLayout(block)) {
-    return block.rows.map((row) => [leftAligned(row.label), leftAligned(row.value)]);
+// aligned, because a column exists to be compared down its right edge. A divided key-value
+// row keeps its cells left-aligned, because each one leads with the word that names it.
+function drawnRowsFor(block, { labelWidth, valueWidth, columnWidth }) {
+  if (isKeyValueBlock(block)) {
+    return block.rows.map((row) =>
+      row.values
+        ? {
+            cells: [leftAligned(row.label), ...row.values.map(leftAligned)],
+            widths: [labelWidth, ...evenlySplit(valueWidth, row.values.length)],
+          }
+        : {
+            cells: [leftAligned(row.label), leftAligned(row.value)],
+            widths: [labelWidth, valueWidth],
+          }
+    );
   }
+
+  const widths = [labelWidth, ...block.columns.map(() => columnWidth)];
   return [
-    [leftAligned(""), ...block.columns.map(rightAligned)],
-    ...block.rows.map((row) => [leftAligned(row.label), ...row.values.map(rightAligned)]),
+    { cells: [leftAligned(""), ...block.columns.map(rightAligned)], widths },
+    ...block.rows.map((row) => ({
+      cells: [leftAligned(row.label), ...row.values.map(rightAligned)],
+      widths,
+    })),
   ];
 }
 
@@ -654,15 +681,14 @@ const leftAligned = (text) => ({ text, alignRight: false });
 const rightAligned = (text) => ({ text, alignRight: true });
 
 function tableFor(block, layout) {
-  const widths = columnWidthsFor(block, layout);
-  const rows = cellRowsFor(block);
-  const lines = [topBorder(block.title, widths)];
+  const rows = drawnRowsFor(block, layout);
+  const lines = [topBorder(block.title, rows[0].widths)];
 
-  rows.forEach((cells, index) => {
-    if (index) lines.push(border(widths, CORNERS.between));
-    lines.push(cellLine(cells, widths));
+  rows.forEach((row, index) => {
+    if (index) lines.push(borderBetween(rows[index - 1].widths, row.widths));
+    lines.push(cellLine(row.cells, row.widths));
   });
-  lines.push(border(widths, CORNERS.bottom));
+  lines.push(border(rows.at(-1).widths, CORNERS.bottom));
 
   return lines;
 }
@@ -679,6 +705,43 @@ function border(widths, [left, join, right]) {
   return left + widths.map(ruled).join(join) + right;
 }
 
+// Rows are free to divide their readings differently, so the rule between two of them shows
+// where each one's walls stand: a wall meeting one from above and below crosses, one that
+// only ends above closes, and one that only begins below opens.
+function borderBetween(above, below) {
+  const [left, , right] = CORNERS.between;
+  const ends = wallsIn(above);
+  const begins = wallsIn(below);
+
+  let drawn = "";
+  for (let at = 0; at < insideTheWalls(above); at++) {
+    drawn += junction(ends.has(at), begins.has(at));
+  }
+  return left + drawn + right;
+}
+
+const insideTheWalls = (widths) => sum(widths) + widths.length - 1;
+
+function junction(ends, begins) {
+  if (ends && begins) return CORNERS.between[1];
+  if (ends) return CORNERS.bottom[1];
+  if (begins) return CORNERS.top[1];
+  return RULE;
+}
+
+// Where each wall stands, counted from the first character inside the left wall.
+function wallsIn(widths) {
+  const walls = new Set();
+  let at = 0;
+  for (const width of widths.slice(0, -1)) {
+    at += width;
+    walls.add(at);
+    at += 1;
+  }
+  return walls;
+}
+
+const sum = (numbers) => numbers.reduce((total, value) => total + value, 0);
 const ruled = (width) => RULE.repeat(width);
 
 function cellLine(cells, widths) {
