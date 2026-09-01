@@ -124,3 +124,10 @@ failure mode this project exists to correct.
 
 Deciding which sessions are ready for extraction and starting it. A sweep reads
 session state and never speaks to the user.
+
+## Extraction lease
+
+The right to be the one process extracting. Held by a **holder**, which is whoever
+took it: a sweep names itself by the identifier it will spawn the extraction under,
+which is not yet a session's. A lease expires, so a crashed holder cannot block
+extraction forever.

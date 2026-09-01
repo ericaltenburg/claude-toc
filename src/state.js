@@ -127,6 +127,16 @@ export function createStateStore(
     return Boolean(load().quarantined[sessionId]);
   }
 
+  function releaseQuarantine(sessionId) {
+    const state = load();
+    if (!state.quarantined[sessionId]) return false;
+
+    delete state.quarantined[sessionId];
+    delete state.failures[sessionId];
+    save(state);
+    return true;
+  }
+
   function claimSweep() {
     const state = load();
     const sweptAt = Date.parse(state.sweptAt ?? "");
@@ -137,27 +147,27 @@ export function createStateStore(
     return true;
   }
 
-  function acquireExtraction(sessionId) {
+  function acquireExtraction(holder) {
     const state = load();
     const current = state.extraction;
     if (current && Date.now() - Date.parse(current.startedAt) < leaseMs) return false;
 
-    state.extraction = { sessionId, startedAt: new Date().toISOString() };
+    state.extraction = { holder, startedAt: new Date().toISOString() };
     save(state);
 
-    if (load().extraction?.sessionId !== sessionId) return false;
+    if (load().extraction?.holder !== holder) return false;
 
-    owned = sessionId;
+    owned = holder;
     return true;
   }
 
-  function releaseExtraction(sessionId = owned) {
-    if (!sessionId) return;
+  function releaseExtraction(holder = owned) {
+    if (!holder) return;
     const state = load();
-    if (state.extraction?.sessionId !== sessionId) return;
+    if (state.extraction?.holder !== holder) return;
     state.extraction = null;
     save(state);
-    if (owned === sessionId) owned = null;
+    if (owned === holder) owned = null;
   }
 
   function offsetIn(state, sessionId) {
@@ -172,6 +182,7 @@ export function createStateStore(
     recordExtraction,
     recordFailure,
     isQuarantined,
+    releaseQuarantine,
     snapshot,
     claimSweep,
     acquireExtraction,

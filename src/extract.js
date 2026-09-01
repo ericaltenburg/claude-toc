@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { createModelCall } from "./bedrock.js";
 import { createConfig } from "./config.js";
+import { localDateParts } from "./parse.js";
 import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { recordedProjectsUnder, salientTermsQuery } from "./search.js";
+import { indexedSessions } from "./session-index.js";
 import { createStateStore, START_OF_TRANSCRIPT, transcriptHasUnreadTurns } from "./state.js";
 import { createSpendLog } from "./spend.js";
 import { createSweeper, EXTRACTION_PROMPT_MARKER } from "./sweep.js";
@@ -17,6 +19,7 @@ export const KNOWN_FACTS_IN_A_PROMPT = 20;
 const FACTS_SCANNED_FOR_CANDIDATES = 200;
 const SAME_PROJECT_BOOST = 2;
 const CHARS_PER_MODEL_CALL = 300_000;
+const CHARS_PER_RETRIED_MODEL_CALL = 60_000;
 
 const EXTRACTION_MODEL_THEN_FALLBACK = [
   "global.anthropic.claude-sonnet-5",
@@ -28,13 +31,14 @@ const TURNS_WORTH_EXTRACTING = 2;
 // --- The transcript slice ---
 
 const NEWLINE = 0x0a;
+const NOTHING_UNREAD = { turns: [], text: "", lastTurnAt: null };
 
 export function unreadSlice(transcriptPath, offset) {
   const fd = openSync(transcriptPath, "r");
   try {
     const { size } = fstatSync(fd);
     const from = transcriptWasRotated(size, offset) ? START_OF_TRANSCRIPT : offset;
-    const nothingUnread = { turns: [], text: "", offset: from };
+    const nothingUnread = { ...NOTHING_UNREAD, offset: from };
     if (from >= size) return nothingUnread;
 
     const buffer = Buffer.allocUnsafe(size - from);
@@ -44,8 +48,13 @@ export function unreadSlice(transcriptPath, offset) {
     const endOfLastCompleteLine = buffer.lastIndexOf(NEWLINE, read - 1);
     if (endOfLastCompleteLine === -1) return nothingUnread;
 
-    const turns = turnsFrom(buffer.toString("utf-8", 0, endOfLastCompleteLine));
-    return { turns, text: turnsToText(turns), offset: from + endOfLastCompleteLine + 1 };
+    const { turns, lastTurnAt } = turnsFrom(buffer.toString("utf-8", 0, endOfLastCompleteLine));
+    return {
+      turns,
+      lastTurnAt,
+      text: turnsToText(turns),
+      offset: from + endOfLastCompleteLine + 1,
+    };
   } finally {
     closeSync(fd);
   }
@@ -57,6 +66,7 @@ function transcriptWasRotated(size, offset) {
 
 function turnsFrom(jsonLines) {
   const turns = [];
+  let lastTurnAt = null;
 
   for (const line of jsonLines.split("\n")) {
     if (!line.trim()) continue;
@@ -67,6 +77,8 @@ function turnsFrom(jsonLines) {
     } catch {
       continue;
     }
+
+    if (typeof entry?.timestamp === "string") lastTurnAt = entry.timestamp;
 
     const role = entry?.role || entry?.type;
     const content = entry?.message?.content;
@@ -82,7 +94,7 @@ function turnsFrom(jsonLines) {
     }
   }
 
-  return turns;
+  return { turns, lastTurnAt };
 }
 
 function pushTextBlocks(turns, role, content) {
@@ -211,7 +223,17 @@ export function parseModelOutput(output) {
     extractionFrom(unfenced) ?? extractionFrom(OUTERMOST_OBJECT.exec(unfenced)?.[0] ?? "");
   if (afterStrippingFences) return afterStrippingFences;
 
-  throw new MalformedOutput("model returned malformed output");
+  throw new MalformedOutput(`model returned malformed output: ${asEvidence(raw)}`);
+}
+
+const ENOUGH_OUTPUT_TO_DIAGNOSE_A_FAILURE = 400;
+
+function asEvidence(output) {
+  const collapsed = output.replace(/\s+/g, " ").trim();
+  if (!collapsed) return "(it returned nothing)";
+  return collapsed.length > ENOUGH_OUTPUT_TO_DIAGNOSE_A_FAILURE
+    ? `${collapsed.slice(0, ENOUGH_OUTPUT_TO_DIAGNOSE_A_FAILURE)}…`
+    : collapsed;
 }
 
 function extractionFrom(text) {
@@ -301,9 +323,10 @@ export function createExtractor(
       return outcome("nothing-to-extract", { sessionId, offset: slice.offset });
     }
 
+    const happenedOn = whenTheConversationHappened(slice, session);
     const written = extracted.map((merged) => ({
       ...merged,
-      topic: { ...merged.topic, id: appendToCorpus(merged, sessionId, candidates) },
+      topic: { ...merged.topic, id: appendToCorpus(merged, sessionId, candidates, happenedOn) },
     }));
 
     state.recordExtraction(sessionId, {
@@ -416,7 +439,7 @@ export function createExtractor(
     return new Set(rows.map((row) => row.topic));
   }
 
-  function appendToCorpus(merged, sessionId, candidates) {
+  function appendToCorpus(merged, sessionId, candidates, happenedOn) {
     const topicId = resolveTopicId(merged.topic.id, candidates);
 
     topics.upsertTopic(topicId, {
@@ -424,13 +447,18 @@ export function createExtractor(
       summary: merged.topic.summary,
     });
     for (const fact of merged.context) {
-      topics.appendToTopic(topicId, "Context", fact, sessionId);
+      topics.appendToTopic(topicId, "Context", fact, sessionId, happenedOn);
     }
     for (const decision of merged.decisions) {
-      topics.appendToTopic(topicId, "Decisions", decision, sessionId);
+      topics.appendToTopic(topicId, "Decisions", decision, sessionId, happenedOn);
     }
 
     return topicId;
+  }
+
+  function whenTheConversationHappened(slice, session) {
+    const at = firstParsable([slice.lastTurnAt, session.started]) ?? Date.now();
+    return localDateParts(at, timeZone).date;
   }
 
   function resolveTopicId(returned, candidates) {
@@ -449,6 +477,14 @@ export function createExtractor(
   }
 
   return { extractSession, index, refresh: () => index.refresh(), close: () => index.close() };
+}
+
+function firstParsable(candidates) {
+  for (const candidate of candidates) {
+    const at = Date.parse(candidate ?? "");
+    if (Number.isFinite(at)) return at;
+  }
+  return null;
 }
 
 function normalizedTopicId(id) {
@@ -497,22 +533,6 @@ function distinct(values) {
 }
 
 // --- CLI ---
-
-function loadSessions(config) {
-  if (!existsSync(config.sessionIndexPath)) return null;
-  return readFileSync(config.sessionIndexPath, "utf-8")
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-}
 
 function reportExtraction(session, result) {
   const short = String(session.session_id ?? "unknown").slice(0, 8);
@@ -570,8 +590,8 @@ function reportDedup(config) {
   console.log(`Merged ${merges.length} topic pair(s). ${remaining} topics remain.`);
 }
 
-function extractEach(config, sessions) {
-  const extractor = createExtractor(config, { log: (line) => console.log(line) });
+function extractEach(config, sessions, options = {}) {
+  const extractor = createExtractor(config, { log: (line) => console.log(line), ...options });
   try {
     for (const session of sessions) {
       reportExtraction(session, extractor.extractSession(session));
@@ -579,6 +599,27 @@ function extractEach(config, sessions) {
   } finally {
     extractor.close();
   }
+}
+
+function retry(config, state, sessions, prefix) {
+  if (!prefix) {
+    console.log("Usage: toc-extract --retry <session-id-prefix>");
+    return 2;
+  }
+
+  const chosen = sessions.filter((session) => String(session.session_id).startsWith(prefix));
+  if (!chosen.length) {
+    console.log(`No session matching "${prefix}"`);
+    return 1;
+  }
+
+  for (const session of chosen) {
+    const released = state.releaseQuarantine(session.session_id);
+    console.log(`${session.session_id}: ${released ? "quarantine released" : "was not quarantined"}`);
+  }
+
+  extractEach(config, chosen, { maxChunkChars: CHARS_PER_RETRIED_MODEL_CALL });
+  return 0;
 }
 
 function main(argv) {
@@ -602,10 +643,14 @@ function main(argv) {
     return 0;
   }
 
-  const sessions = loadSessions(config);
+  const sessions = indexedSessions(config);
   if (!sessions) {
     console.log("No sessions indexed yet.");
     return 0;
+  }
+
+  if (arg === "--retry") {
+    return retry(config, state, sessions, argv[1]);
   }
 
   if (!arg) {

@@ -17,6 +17,7 @@ export const LOGGER_HOOK = join(REPO_ROOT, "hooks", "toc-logger.mjs");
 export const SWEEP_HOOK = join(REPO_ROOT, "hooks", "toc-sweep.mjs");
 export const EXTRACTOR = join(REPO_ROOT, "bin", "toc-extract");
 export const SPEND_REPORT = join(REPO_ROOT, "bin", "toc-spend");
+export const STATUS_REPORT = join(REPO_ROOT, "bin", "toc-status");
 
 export function tempCorpus() {
   const root = mkdtempSync(join(tmpdir(), "claude-toc-"));
@@ -100,9 +101,15 @@ export function appendTranscript(config, sessionId, turns, options = {}) {
   return path;
 }
 
-function transcriptRecord({ role = "user", text }, { cwd = null } = {}) {
+function transcriptRecord({ role = "user", text, at }, { cwd = null, at: whenTheTurnsHappened } = {}) {
   const content = role === "user" ? aBareString(text) : textBlocks(text);
-  return JSON.stringify({ type: role, cwd, message: { content } });
+  const timestamp = at ?? whenTheTurnsHappened;
+  return JSON.stringify({
+    type: role,
+    cwd,
+    ...(timestamp ? { timestamp: new Date(timestamp).toISOString() } : {}),
+    message: { content },
+  });
 }
 
 const aBareString = (text) => text;

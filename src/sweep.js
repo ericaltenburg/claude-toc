@@ -30,17 +30,28 @@ export function createSweeper(
       .sort((a, b) => b.modified - a.modified);
   }
 
-  function candidates() {
-    const chosen = [];
+  // Lazy on purpose: opening each transcript costs a read, and a sweep wants only a few.
+  function* waitingSessionsNewestFirst() {
     for (const transcript of idleSessions()) {
-      if (chosen.length === sessionsPerSweep) break;
       const opening = howTheTranscriptOpens(transcript.path);
       if (opening.isTheExtractionPrompt) continue;
-      chosen.push({
+      yield {
         session_id: transcript.sessionId,
         transcript: transcript.path,
         cwd: opening.cwd,
-      });
+      };
+    }
+  }
+
+  function waitingSessions() {
+    return [...waitingSessionsNewestFirst()];
+  }
+
+  function candidates() {
+    const chosen = [];
+    for (const waiting of waitingSessionsNewestFirst()) {
+      if (chosen.length === sessionsPerSweep) break;
+      chosen.push(waiting);
     }
     return chosen;
   }
@@ -81,7 +92,7 @@ export function createSweeper(
     return transcripts;
   }
 
-  return { candidates, idleSessions };
+  return { candidates, idleSessions, waitingSessions };
 }
 
 function statOrNull(path) {

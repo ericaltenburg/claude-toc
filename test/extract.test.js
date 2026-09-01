@@ -111,6 +111,59 @@ test("a session's unread slice becomes facts on the topic the model chose", () =
   assert.ok(result.offset > 0);
 });
 
+const A_WEEK_AGO = Date.parse("2026-08-24T15:00:00Z");
+const THE_DAY_THE_CONVERSATION_HAPPENED = "2026-08-24";
+
+function dateOnEveryFact(config, topicId) {
+  return [...new Set(factsIn(config, topicId).map((line) => line.match(/, (\d{4}-\d{2}-\d{2})\]/)?.[1]))];
+}
+
+test("a fact is dated from the conversation, not from when the extractor ran", () => {
+  const config = tempCorpus();
+  writeTranscript(config, SESSION, CONVERSATION, { at: A_WEEK_AGO });
+  appendSessions(config, [sessionIn(config)]);
+
+  const extractor = extractorFor(config, stubModel([MODEL_OUTPUT]), { timeZone: "UTC" });
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.equal(result.status, "extracted");
+  assert.deepEqual(
+    dateOnEveryFact(config, "alcs_broadcast_variants"),
+    [THE_DAY_THE_CONVERSATION_HAPPENED],
+    "a week-old session extracted today is a week-old fact, not today's news"
+  );
+});
+
+test("a fact from a transcript with no timestamps falls back to when the session started", () => {
+  const config = tempCorpus();
+  writeTranscript(config, SESSION, CONVERSATION);
+  const started = `${THE_DAY_THE_CONVERSATION_HAPPENED}T15:00:00.000Z`;
+  appendSessions(config, [sessionIn(config, { started })]);
+
+  const extractor = extractorFor(config, stubModel([MODEL_OUTPUT]), { timeZone: "UTC" });
+  extractor.extractSession(sessionIn(config, { started }));
+  extractor.close();
+
+  assert.deepEqual(dateOnEveryFact(config, "alcs_broadcast_variants"), [
+    THE_DAY_THE_CONVERSATION_HAPPENED,
+  ]);
+});
+
+test("a fact with nothing to date it by is dated today", () => {
+  const config = tempCorpus();
+  writeTranscript(config, SESSION, CONVERSATION);
+  appendSessions(config, [sessionIn(config, { started: null })]);
+
+  const extractor = extractorFor(config, stubModel([MODEL_OUTPUT]), { timeZone: "UTC" });
+  extractor.extractSession(sessionIn(config, { started: null }));
+  extractor.close();
+
+  assert.deepEqual(dateOnEveryFact(config, "alcs_broadcast_variants"), [
+    new Date().toISOString().slice(0, 10),
+  ]);
+});
+
 test("candidate topics come from a full-text query, capped at ten", () => {
   const config = tempCorpus();
   for (let i = 0; i < 30; i++) {
@@ -375,6 +428,43 @@ test("a session failing three times is quarantined and surfaced", () => {
   assert.equal(skipped.extractSession(sessionIn(config)).status, "quarantined");
   assert.equal(model.calls.length, callsBefore, "a quarantined session is not called for again");
   skipped.close();
+});
+
+test("a malformed reply is recorded with what the model actually said", () => {
+  const config = corpusWithOneTopic();
+  const model = stubModel(["I can't help with that particular request."]);
+  const extractor = extractorFor(config, model);
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.equal(result.status, "failed");
+  assert.match(
+    result.error,
+    /I can't help with that/,
+    "a failure nobody can diagnose is a failure nobody can fix"
+  );
+  assert.match(createStateStore(config).load().failures[SESSION].error, /I can't help with that/);
+});
+
+test("a released session is extracted on the next attempt", () => {
+  const config = corpusWithOneTopic();
+  const failing = stubModel(() => new Error("model unavailable"));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const extractor = extractorFor(config, failing);
+    extractor.extractSession(sessionIn(config));
+    extractor.close();
+  }
+  const state = createStateStore(config);
+  assert.equal(state.isQuarantined(SESSION), true);
+
+  state.releaseQuarantine(SESSION);
+  const retry = extractorFor(config, stubModel([MODEL_OUTPUT]));
+  const result = retry.extractSession(sessionIn(config));
+  retry.close();
+
+  assert.equal(result.status, "extracted");
+  assert.ok(factsIn(config, "alcs_broadcast_variants").some((l) => l.includes("keyed by show id")));
 });
 
 test("a failed extraction leaves the slice for the next attempt", () => {

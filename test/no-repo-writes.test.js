@@ -18,6 +18,7 @@ import {
   SWEEP_HOOK,
   EXTRACTOR,
   SPEND_REPORT,
+  STATUS_REPORT,
 } from "./support/corpus.js";
 
 function repoStatus() {
@@ -62,6 +63,7 @@ test("every write lands in the configured corpus and none in the repository", ()
     assert.equal(result.stderr, "", `toc-extract ${args.join(" ")}`);
   }
   assert.equal(runCli(SPEND_REPORT, { config }).stderr, "");
+  assert.equal(runCli(STATUS_REPORT, { config }).stderr, "");
 
   assert.ok(existsSync(join(config.topicsDir, "alcs_broadcast_variants.md")));
   assert.ok(existsSync(config.tocPath));

@@ -706,7 +706,11 @@ function renderQuarantined(rows) {
         `  error: ${row.error ?? "unrecorded"}`
     )
     .join("\n");
-  return { text: `QUARANTINED  ${rows.length}\n${text}\n` };
+  return {
+    text:
+      `QUARANTINED  ${rows.length}\n${text}\n` +
+      `\nRelease and extract one with: toc-extract --retry <session-id>\n`,
+  };
 }
 
 function renderSmoke(report, options) {
