@@ -219,6 +219,11 @@ function within(localDate, since) {
 
 // --- The search log ---
 
+// The two tallies that are not sources: a search the corpus could not answer, and a query
+// whose syntax was rejected and silently retried as bare terms.
+const RETURNED_NOTHING = "returned nothing";
+const SYNTAX_FALLBACK = "syntax fallback";
+
 // The search log stores an ISO timestamp and no local date, unlike the spend log. Per ADR
 // 0005 the windows are local days, so the local date is derived here and the log is left
 // exactly as the read path writes it.
@@ -237,17 +242,17 @@ export function summarizeSearchLog(entries, { at = Date.now(), timeZone } = {}) 
 
   const tallies = [
     ...SOURCES.map((source) => ({
-      label: source,
+      key: source,
       matches: (entry) => entry.source === source,
     })),
-    { label: "returned nothing", matches: (entry) => entry.returnedNothing },
-    { label: "syntax fallbacks", matches: (entry) => entry.fellBack },
+    { key: RETURNED_NOTHING, matches: (entry) => entry.returnedNothing },
+    { key: SYNTAX_FALLBACK, matches: (entry) => entry.fellBack },
   ];
 
   return {
     windows: windows.map(({ days }) => ({ days })),
-    tallies: tallies.map(({ label, matches }) => ({
-      label,
+    tallies: tallies.map(({ key, matches }) => ({
+      key,
       counts: windows.map(
         ({ since }) =>
           counted.filter((entry) => matches(entry) && within(entry.localDate, since)).length
@@ -307,7 +312,7 @@ export function summarizeStatus(
     blocks: [
       extractionBlock(extraction, at, timeZone),
       corpusBlock(corpus),
-      searchBlock(search, smoke),
+      searchBlock(search),
       spendBlock(spend),
     ],
   };
@@ -400,17 +405,20 @@ function hasRecordedNothing(extraction) {
   );
 }
 
+// Every label below names the question its row answers rather than the mechanism the
+// reading came from, and the code keeps its mechanism names. ADR 0015 records why the two
+// registers are allowed to differ, and CONTEXT.md carries the mapping between them.
 function extractionBlock(extraction, at, timeZone) {
   return {
     title: "EXTRACTION",
     rows: [
       { label: "last extraction", value: momentWithAge(extraction.processed.lastAt, at, timeZone) },
       { label: "sessions waiting", value: String(extraction.waiting) },
-      { label: "hook heartbeat", value: momentWithAge(extraction.sweptAt, at, timeZone) },
-      { label: "lease", value: leaseValue(extraction.lease, at) },
-      { label: "processed", value: sessionCount(extraction.processed.count) },
-      { label: "failures", value: failuresValue(extraction.failures) },
-      { label: "quarantined", value: String(extraction.quarantined) },
+      { label: "last checked for work", value: momentWithAge(extraction.sweptAt, at, timeZone) },
+      { label: "extracting now", value: extractingNowValue(extraction.lease, at) },
+      { label: "sessions extracted", value: thousands(extraction.processed.count) },
+      { label: "retrying after failure", value: retryingValue(extraction.failures) },
+      { label: "given up on", value: String(extraction.quarantined) },
     ],
   };
 }
@@ -419,51 +427,43 @@ function corpusBlock(corpus) {
   return {
     title: "CORPUS",
     rows: [
-      {
-        label: "topics",
-        value: thousands(corpus.topics),
-        rightAligned: true,
-        note: spreadNote(corpus.factsPerTopic),
-      },
-      {
-        label: "facts",
-        value: thousands(corpus.facts),
-        rightAligned: true,
-        note: growthNote(corpus.added),
-      },
-      { label: "prompts", value: thousands(corpus.prompts), rightAligned: true },
-      { label: "sessions", value: thousands(corpus.sessions), rightAligned: true },
-      {
-        label: "index.db",
-        value: megabytes(corpus.bytes),
-        rightAligned: true,
-        note: refreshNote(corpus.refreshMs),
-      },
+      { label: "topics", value: thousands(corpus.topics) },
+      { label: "facts", value: thousands(corpus.facts) },
+      { label: "facts added", value: growthValue(corpus.added) },
+      { label: "facts per topic", value: spreadValue(corpus.factsPerTopic) },
+      { label: "largest topic", value: corpus.factsPerTopic.largest ?? NONE },
+      { label: "prompts", value: thousands(corpus.prompts) },
+      { label: "sessions", value: thousands(corpus.sessions) },
+      { label: "index.db", value: indexFileValue(corpus) },
     ],
   };
 }
 
-function searchBlock(search, smoke) {
+// The log records which source issued a search; the report says who decided to search. Every
+// source search.js can write needs a label here, or its row renders without one.
+export const SEARCH_ROW_LABELS = {
+  automatic: "Claude searched",
+  explicit: "you searched",
+  smoke: "self-tests",
+  [RETURNED_NOTHING]: "found nothing",
+  [SYNTAX_FALLBACK]: "bad syntax, retried",
+};
+
+// Smoke runs on every invocation and reaches the verdict when it fails, but it is not a
+// row: the corpus answering its own known-good queries is a pass/fail, not a count, and
+// the counted rows here are what the log recorded rather than what just happened.
+function searchBlock(search) {
   return {
     title: "SEARCH",
     columns: search.windows.map(windowHeading),
-    rows: [
-      ...search.tallies.map((tally) => ({
-        label: tally.label,
-        values: tally.counts.map(thousands),
-      })),
-      { label: "smoke queries", value: smokeValue(smoke) },
-    ],
+    rows: search.tallies.map((tally) => ({
+      label: SEARCH_ROW_LABELS[tally.key],
+      values: tally.counts.map(thousands),
+    })),
   };
 }
 
-// The counted rows above are what the log recorded; this one is what just happened, so it
-// carries one value across the windows rather than a count in each.
-function smokeValue(smoke) {
-  return smoke.configured ? smokeOutcome(smoke) : "none configured";
-}
-
-// The verdict names the same outcome as the report line, so both phrase it here.
+// The verdict is the only place smoke is spoken, so it phrases the outcome.
 function smokeOutcome({ configured, failed }) {
   const [outcome, counted] = failed ? ["FAILED", failed] : ["passed", configured - failed];
   return `${outcome} (${counted} of ${configured})`;
@@ -474,9 +474,9 @@ function spendBlock({ windows, billedTo }) {
     title: "SPEND",
     columns: windows.map(windowHeading),
     rows: [
-      { label: "calls", values: windows.map((window) => thousands(window.calls)) },
-      { label: "estimated", values: windows.map((window) => dollars(window.cost)) },
-      { label: "unpriced", values: windows.map((window) => thousands(window.unpriced)) },
+      { label: "model calls", values: windows.map((window) => thousands(window.calls)) },
+      { label: "estimated cost", values: windows.map((window) => dollars(window.cost)) },
+      { label: "calls with no rate", values: windows.map((window) => thousands(window.unpriced)) },
     ],
     footer: whoseBillThisIs(billedTo),
   };
@@ -492,18 +492,23 @@ function whoseBillThisIs(billedTo) {
 
 const windowHeading = ({ days }) => (days === ALL_TIME ? "all-time" : `${days}d`);
 
-function spreadNote({ min, median, max, largest }) {
-  const largestNamed = largest ? `${thousands(max)} ${largest}` : thousands(max);
-  return `facts/topic   min ${thousands(min)}  median ${thousands(median)}  max ${largestNamed}`;
+// Two readings of one subject share a row where neither is worth a row of its own. The gap
+// between them is wide enough to read as two readings and not as one sentence.
+const BESIDE = "    ";
+
+function spreadValue({ min, median, max }) {
+  return [`min ${thousands(min)}`, `median ${thousands(median)}`, `max ${thousands(max)}`].join(
+    BESIDE
+  );
 }
 
-function growthNote(added) {
-  const windows = added.map((window) => `${window.days}d ${thousands(window.facts)}`);
-  return `added   ${windows.join("   ")}`;
+function growthValue(added) {
+  return added.map((window) => `${window.days}d ${thousands(window.facts)}`).join(BESIDE);
 }
 
-function refreshNote(ms) {
-  return Number.isFinite(ms) ? `refresh took ${Math.round(ms)} ms` : undefined;
+function indexFileValue({ bytes, refreshMs }) {
+  const refresh = Number.isFinite(refreshMs) ? `refresh took ${Math.round(refreshMs)} ms` : null;
+  return [megabytes(bytes), refresh].filter(Boolean).join(BESIDE);
 }
 
 const A_MEGABYTE = 1024 * 1024;
@@ -514,6 +519,7 @@ function megabytes(bytes) {
 }
 
 const NEVER = "never";
+const NONE = "none";
 
 function momentWithAge(ms, at, timeZone) {
   if (!Number.isFinite(ms)) return NEVER;
@@ -521,22 +527,23 @@ function momentWithAge(ms, at, timeZone) {
   return `${date} ${time.slice(0, "HH:MM".length)}  (${elapsed(at - ms)} ago)`;
 }
 
-function leaseValue(lease, at) {
-  if (!lease) return "free";
-  const notes = [
-    Number.isFinite(lease.startedAt) ? elapsed(at - lease.startedAt) : null,
+// A held lease is an extraction in flight, which is the only part of the mechanism the
+// operator can act on. The holder is a random identifier and appears only in the problem
+// line for an expired lease nothing recovered from, where it is the thing to go and look
+// for. An expiry is still noted here, because ADR 0014 reports a recovered crash without
+// counting it as blockage and this row is where that recovery is visible.
+function extractingNowValue(lease, at) {
+  if (!lease) return "no";
+  const since = [
+    Number.isFinite(lease.startedAt) ? `started ${elapsed(at - lease.startedAt)} ago` : null,
     hasExpired(lease, at) ? `expired ${elapsed(at - lease.expiresAt)} ago` : null,
   ].filter(Boolean);
-  const detail = notes.length ? ` (${notes.join(", ")})` : "";
-  return `held by ${lease.holder}${detail}`;
+  return since.length ? `yes (${since.join(", ")})` : "yes";
 }
 
-function failuresValue({ sessions, attempts }) {
+function retryingValue({ sessions, attempts }) {
   if (!sessions) return "0";
-  if (sessions === 1) {
-    return `1 (${attempts} attempt${attempts === 1 ? "" : "s"}, short of quarantine)`;
-  }
-  return `${sessions} (${attempts} attempts between them, short of quarantine)`;
+  return `${sessionCount(sessions)} (${attempts} attempt${attempts === 1 ? "" : "s"})`;
 }
 
 function sessionCount(count) {
@@ -560,20 +567,22 @@ const thousands = (count) => count.toLocaleString("en-US");
 
 // --- Rendering ---
 
-const REPORT_WIDTH = 68;
-const LABEL_WIDTH = 21;
-const RIGHT_ALIGNED_WIDTH = 7;
-const VALUE_WIDTH = 15;
-const COLUMN_WIDTHS = [5, 9, 11];
+// One rendering, per ADR 0015. Sentences are prose and readings are boxed: the verdict and
+// the footer notes are printed bare, and every reading sits in a cell of a bordered table.
+
+const RULE = "\u2500";
+const WALL = "\u2502";
+const CORNERS = { top: "\u250c\u252c\u2510", between: "\u251c\u253c\u2524", bottom: "\u2514\u2534\u2518" };
+
+// A cell is its text with a space of breathing room on each side of it.
+const PADDING = 2;
 
 export function renderStatus(report) {
+  const layout = layoutFor(report.blocks);
   const lines = [verdictLine(report.verdict), ...report.verdict.problems.map((p) => `  ! ${p}`)];
 
   for (const block of report.blocks) {
-    lines.push("", heading(block));
-    for (const row of block.rows) {
-      lines.push(rowLine(row));
-    }
+    lines.push("", ...tableFor(block, layout));
     if (block.footer?.length) lines.push("", ...block.footer);
   }
 
@@ -582,87 +591,123 @@ export function renderStatus(report) {
 
 const inColumnLayout = (block) => Boolean(block.columns);
 
-function heading(block) {
-  if (!inColumnLayout(block)) return block.title;
-  return inColumns(block.title, block.columns);
+// Every block is measured before any is drawn, so the four tables share one outer width
+// and the report reads as one report. The width is what the widest reading needs, because a
+// value worth printing is worth reading in full and truncating one would hide the reading
+// most worth having.
+function layoutFor(blocks) {
+  const columns = countedColumns(blocks);
+  const readingWidth = widest(blocks.filter(isKeyValueBlock).flatMap(readingsIn)) + PADDING;
+  const cellWidth = widest(blocks.filter(inColumnLayout).flatMap(cellsIn)) + PADDING;
+  const columnWidth = columns
+    ? Math.max(cellWidth, Math.ceil((readingWidth - (columns - 1)) / columns))
+    : 0;
+
+  return {
+    labelWidth: Math.max(...blocks.map(labelColumnFor)),
+    valueWidth: columns ? spannedBy(columns, columnWidth) : readingWidth,
+    columnWidth,
+  };
 }
 
-function rowLine(row) {
-  if (row.values) return inColumns(`  ${row.label}`, row.values);
-  const label = `  ${row.label.padEnd(LABEL_WIDTH)}`;
-  const value = row.rightAligned ? row.value.padStart(RIGHT_ALIGNED_WIDTH) : row.value;
-  return label + (row.note ? `${value.padEnd(VALUE_WIDTH)}${row.note}` : value);
+// The windowed blocks report the same windows by construction, so one column width serves
+// them both and a dollar amount sits under a call count. Their columns are equal to each
+// other rather than dividing the width exactly, which is what widens the whole report to a
+// multiple of a column when a key-value reading asks for more room than they need.
+function countedColumns(blocks) {
+  const windowed = blocks.filter(inColumnLayout);
+  return windowed.length ? Math.max(...windowed.map((block) => block.columns.length)) : 0;
 }
 
-const INDENT = 2;
-const A_COLUMN_PAST_THE_NAMED_WIDTHS = COLUMN_WIDTHS.at(-1);
+const isKeyValueBlock = (block) => !inColumnLayout(block);
+const readingsIn = (block) => block.rows.map((row) => row.value);
+const cellsIn = (block) => [...block.columns, ...block.rows.flatMap((row) => row.values)];
 
-// Cells are placed against their column's right edge, so a cell too wide for its column
-// eats into the gutter to its left rather than pushing every column after it along. A
-// dollar amount and a call count then line up down the block whatever their widths.
-function inColumns(label, cells) {
-  return cells.reduce((line, cell, i) => line.padEnd(rightEdgeOf(i) - cell.length) + cell, label);
+// The title sits in the top border of the label column, so a long title widens that column
+// the way a long label does.
+function labelColumnFor(block) {
+  return Math.max(widest(block.rows.map((row) => row.label)) + PADDING, titled(block.title).length);
 }
 
-function rightEdgeOf(column) {
-  const widths = Array.from(
-    { length: column + 1 },
-    (_, i) => COLUMN_WIDTHS[i] ?? A_COLUMN_PAST_THE_NAMED_WIDTHS
-  );
-  return LABEL_WIDTH + INDENT + widths.reduce((total, width) => total + width, 0);
+function spannedBy(count, width) {
+  return count * width + (count - 1);
 }
 
+function columnWidthsFor(block, { labelWidth, valueWidth, columnWidth }) {
+  if (isKeyValueBlock(block)) return [labelWidth, valueWidth];
+  return [labelWidth, ...block.columns.map(() => columnWidth)];
+}
+
+// Labels and key-value readings are left-aligned; a windowed block's cells are right-
+// aligned, because a column exists to be compared down its right edge.
+function cellRowsFor(block) {
+  if (!inColumnLayout(block)) {
+    return block.rows.map((row) => [leftAligned(row.label), leftAligned(row.value)]);
+  }
+  return [
+    [leftAligned(""), ...block.columns.map(rightAligned)],
+    ...block.rows.map((row) => [leftAligned(row.label), ...row.values.map(rightAligned)]),
+  ];
+}
+
+const leftAligned = (text) => ({ text, alignRight: false });
+const rightAligned = (text) => ({ text, alignRight: true });
+
+function tableFor(block, layout) {
+  const widths = columnWidthsFor(block, layout);
+  const rows = cellRowsFor(block);
+  const lines = [topBorder(block.title, widths)];
+
+  rows.forEach((cells, index) => {
+    if (index) lines.push(border(widths, CORNERS.between));
+    lines.push(cellLine(cells, widths));
+  });
+  lines.push(border(widths, CORNERS.bottom));
+
+  return lines;
+}
+
+// The block's title lives in the top border, where nothing can read it as a reading.
+function topBorder(title, [labelWidth, ...rest]) {
+  const [left, join, right] = CORNERS.top;
+  return left + [titled(title).padEnd(labelWidth, RULE), ...rest.map(ruled)].join(join) + right;
+}
+
+const titled = (title) => `${RULE} ${title} `;
+
+function border(widths, [left, join, right]) {
+  return left + widths.map(ruled).join(join) + right;
+}
+
+const ruled = (width) => RULE.repeat(width);
+
+function cellLine(cells, widths) {
+  const drawn = cells.map(({ text, alignRight }, i) => {
+    const room = widths[i] - PADDING;
+    return ` ${alignRight ? text.padStart(room) : text.padEnd(room)} `;
+  });
+  return WALL + drawn.join(WALL) + WALL;
+}
+
+const widest = (texts) => texts.reduce((width, text) => Math.max(width, text.length), 0);
+
+// The line the operator stops reading after on the common day, and the one line that names
+// the report.
 function verdictLine(verdict) {
-  const title = "claude-toc status";
-  return title + verdict.label.padStart(REPORT_WIDTH - title.length);
-}
-
-export function renderStatusAsMarkdown(report) {
-  const lines = [`# claude-toc status: ${report.verdict.label}`];
-  if (report.verdict.problems.length) {
-    lines.push("", ...report.verdict.problems.map((problem) => `- ${problem}`));
-  }
-
-  for (const block of report.blocks) {
-    const headings = ["reading", ...valueHeadings(block)];
-    lines.push("", `## ${block.title}`, "", tableRow(headings), tableRow(headings.map(() => "---")));
-    for (const row of block.rows) {
-      const values = row.values ?? [row.value, row.note ?? ""];
-      lines.push(tableRow(toWidth([row.label, ...values], headings.length)));
-    }
-    if (block.footer?.length) lines.push("", ...block.footer);
-  }
-
-  return `${lines.join("\n")}\n`;
-}
-
-function valueHeadings(block) {
-  if (inColumnLayout(block)) return block.columns;
-  return block.rows.some((row) => row.note) ? ["value", "note"] : ["value"];
-}
-
-const tableRow = (cells) => `| ${cells.join(" | ")} |`;
-
-// A row carrying one value inside a block laid out in windows still owes the table a cell
-// per heading, or the row it renders belongs to a different table than its header.
-function toWidth(cells, width) {
-  return Array.from({ length: width }, (_, i) => cells[i] ?? "");
+  return `CLAUDE-TOC STATUS: ${verdict.label}`;
 }
 
 // --- CLI ---
 
-const USAGE = "usage: toc-status [--markdown]";
+const USAGE = "usage: toc-status";
 
 function main(argv) {
-  const markdown = argv.includes("--markdown");
-  const unrecognised = argv.filter((argument) => argument !== "--markdown");
-  if (unrecognised.length) {
-    process.stderr.write(`toc-status: unexpected argument ${unrecognised[0]}\n${USAGE}\n`);
+  if (argv.length) {
+    process.stderr.write(`toc-status: unexpected argument ${argv[0]}\n${USAGE}\n`);
     return 2;
   }
 
-  const report = createStatusReport(createConfig()).read();
-  process.stdout.write(markdown ? renderStatusAsMarkdown(report) : renderStatus(report));
+  process.stdout.write(renderStatus(createStatusReport(createConfig()).read()));
   return 0;
 }
 

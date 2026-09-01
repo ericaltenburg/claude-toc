@@ -96,6 +96,11 @@ a **syntax fallback**, which is a query that degraded without saying so. A
 search that **returned nothing** and a syntax fallback are both read-path
 quality signals, never blockage.
 
+On the status report these read by who decided to search and what came back:
+automatic is **Claude searched**, explicit is **you searched**, smoke is
+**self-tests**, a search that returned nothing is **found nothing**, and a syntax
+fallback is **bad syntax, retried**.
+
 The **current project** is the repository the session is working in. It is what an
 automatic search means by "this project".
 
@@ -112,6 +117,9 @@ Turning a slice of one session's transcript into facts, and appending them to a
 topic. Extraction is expensive, asynchronous, and best-effort. It costs money and
 runs behind the live conversation.
 
+On the status report the count of sessions extraction has processed reads
+**sessions extracted**.
+
 ## Spend
 
 What extraction cost, recorded per model call: the tokens in and out, the model, and
@@ -121,6 +129,10 @@ a rate table, because rates are not something this project can observe.
 A call is **unpriced** when its model has no entry in the rate table. Its tokens
 are counted and its dollars are not, so unpriced calls are how far the estimate
 falls short of the bill. An unpriced call is a caveat on a number, never blockage.
+
+On the status report calls read **model calls**, the estimate reads **estimated
+cost**, and unpriced calls read **calls with no rate**, which says what is missing
+rather than naming the state the call is in.
 
 Spend is a record of the write path only. Search costs nothing.
 
@@ -133,10 +145,18 @@ Quarantine is a state a session is put in, never a state a fact or topic has.
 Surfaced through search on request, because a failure nobody can see is the
 failure mode this project exists to correct.
 
+On the status report this reads **given up on**, and the failures short of it read
+**retrying after failure**.
+
 ## Sweep
 
 Deciding which sessions are ready for extraction and starting it. A sweep reads
 session state and never speaks to the user.
+
+On the status report the time of the last sweep reads **last checked for work**,
+which says what a sweep is: a sweep that found nothing still swept. A fresh
+"last checked for work" over a stale "last extraction" is the report saying the
+write path is alive and producing nothing.
 
 ## Waiting session
 
@@ -151,6 +171,10 @@ took it: a sweep names itself by the identifier it will spawn the extraction und
 which is not yet a session's. A lease expires, so a crashed holder cannot block
 extraction forever.
 
+On the status report a held lease reads **extracting now**, because that is the
+only part of it an operator can act on. The holder is named in the problem line
+for a lease nothing recovered from, and nowhere else.
+
 ## Status
 
 One reading of everything already recorded: what extraction has done, what the corpus
@@ -164,4 +188,14 @@ week is healthy. Having never run is its own verdict, distinct from healthy.
 Status runs the corpus's smoke queries every time, with search logging suppressed so the
 report never inflates the smoke count it prints. Smoke queries that fail are blockage: the
 corpus can no longer answer questions it is known to have answered. A corpus with no smoke
-queries configured has nothing to fail and is not a problem.
+queries configured has nothing to fail and is not a problem. Smoke takes no row on the
+report: it is the verdict that speaks it, where the corpus's own **self-tests** are the
+searches the log recorded.
+
+**The report and the code speak different registers, on purpose.** Every term above keeps
+its mechanism name in the code — `state.quarantined`, `sweptAt`, `acquireExtraction` — and
+appears on the report as the question it answers, because a lease really is a time-bounded
+exclusive claim and renaming the field to match a display label would make the code worse
+to serve a terminal. The mapping is recorded in each term's entry, and ADR 0015 records
+why the divergence is a decision rather than an inconsistency to tidy away. The report's
+wording is a rendering concern and lives with the rendering.

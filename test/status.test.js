@@ -8,7 +8,9 @@ import {
   summarizeSearchLog,
   summarizeStatus,
   EXTRACTION_IS_STALE_AFTER_MS,
+  SEARCH_ROW_LABELS,
 } from "../src/status.js";
+import { SOURCES } from "../src/search.js";
 import { createSpendLog } from "../src/spend.js";
 import { createStateStore, EXTRACTION_LEASE_MS } from "../src/state.js";
 import { EXTRACTION_PROMPT_MARKER, SESSION_IS_IDLE_AFTER_MS } from "../src/sweep.js";
@@ -140,7 +142,7 @@ test("the last extraction is dated in local time and aged from the injected cloc
   );
 
   assert.equal(rowValue(report, "last extraction"), "2026-08-27 10:47  (13m ago)");
-  assert.equal(rowValue(report, "processed"), "173 sessions");
+  assert.equal(rowValue(report, "sessions extracted"), "173");
 });
 
 test("a queue with nothing recorded behind it still reads as never run", () => {
@@ -150,7 +152,7 @@ test("a queue with nothing recorded behind it still reads as never run", () => {
   assert.equal(rowValue(report, "sessions waiting"), "4");
 });
 
-test("the sweep timestamp is a separate row and is labelled as a heartbeat", () => {
+test("the sweep row says it checked for work, which is not the same as having done it", () => {
   const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
   const report = summarizeStatus(
     extractionReadings({
@@ -162,8 +164,8 @@ test("the sweep timestamp is a separate row and is labelled as a heartbeat", () 
 
   const labels = extractionBlock(report).rows.map((row) => row.label);
   assert.ok(labels.includes("last extraction"));
-  assert.ok(labels.includes("hook heartbeat"));
-  assert.equal(rowValue(report, "hook heartbeat"), "2026-08-27 10:56  (4m ago)");
+  assert.ok(labels.includes("last checked for work"));
+  assert.equal(rowValue(report, "last checked for work"), "2026-08-27 10:56  (4m ago)");
 });
 
 test("nothing extracted and nothing swept read as never rather than as a date", () => {
@@ -172,10 +174,10 @@ test("nothing extracted and nothing swept read as never rather than as a date", 
   });
 
   assert.equal(rowValue(report, "last extraction"), "never");
-  assert.equal(rowValue(report, "hook heartbeat"), "never");
+  assert.equal(rowValue(report, "last checked for work"), "never");
 });
 
-test("an unheld lease reads as free, and a held one names its holder and age", () => {
+test("an extraction in flight is reported as one, and an idle lease as no extraction", () => {
   const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
   const free = summarizeStatus(extractionReadings({ processed: { count: 1, lastAt: now } }), {
     now: () => now,
@@ -188,8 +190,29 @@ test("an unheld lease reads as free, and a held one names its holder and age", (
     { now: () => now }
   );
 
-  assert.equal(rowValue(free, "lease"), "free");
-  assert.equal(rowValue(held, "lease"), "held by sweep-316972f2 (2m)");
+  assert.equal(rowValue(free, "extracting now"), "no");
+  assert.equal(rowValue(held, "extracting now"), "yes (started 2m ago)");
+});
+
+test("the report names no mechanism, and the lease is not among its labels", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const report = summarizeStatus(
+    extractionReadings({ processed: { count: 1, lastAt: now }, lease: leaseLive(now) }),
+    { now: () => now }
+  );
+
+  assert.deepEqual(
+    extractionBlock(report).rows.map((row) => row.label),
+    [
+      "last extraction",
+      "sessions waiting",
+      "last checked for work",
+      "extracting now",
+      "sessions extracted",
+      "retrying after failure",
+      "given up on",
+    ]
+  );
 });
 
 test("failures short of quarantine are counted with their attempts", () => {
@@ -203,8 +226,8 @@ test("failures short of quarantine are counted with their attempts", () => {
     { now: () => now }
   );
 
-  assert.equal(rowValue(report, "failures"), "1 (1 attempt, short of quarantine)");
-  assert.equal(rowValue(report, "quarantined"), "2");
+  assert.equal(rowValue(report, "retrying after failure"), "1 session (1 attempt)");
+  assert.equal(rowValue(report, "given up on"), "2");
 });
 
 test("attempts spread over several failing sessions are not read as one session's", () => {
@@ -217,7 +240,7 @@ test("attempts spread over several failing sessions are not read as one session'
     { now: () => now }
   );
 
-  assert.equal(rowValue(report, "failures"), "2 (4 attempts between them, short of quarantine)");
+  assert.equal(rowValue(report, "retrying after failure"), "2 sessions (4 attempts)");
 });
 
 // --- The verdict ---
@@ -281,7 +304,7 @@ test("the staleness threshold is overridable through the options object", () => 
   );
 });
 
-test("a frozen hook heartbeat with an empty queue is healthy", () => {
+test("a frozen sweep with an empty queue is healthy", () => {
   const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
   const report = summarizeStatus(
     extractionReadings({
@@ -307,7 +330,7 @@ test("an expired lease with an extraction since it expired is reported, not a pr
   );
 
   assert.equal(report.verdict.label, "healthy");
-  assert.match(rowValue(report, "lease"), /expired/);
+  assert.match(rowValue(report, "extracting now"), /expired/);
 });
 
 test("an expired lease with no extraction since it expired is a problem", () => {
@@ -420,7 +443,7 @@ test("the waiting count is what the next sweep would act on", () => {
   const report = createStatusReport(config, { timeZone: NEW_YORK }).read();
 
   assert.equal(rowValue(report, "sessions waiting"), "1");
-  assert.equal(rowValue(report, "quarantined"), "1");
+  assert.equal(rowValue(report, "given up on"), "1");
 });
 
 test("the extractor's own transcripts are not sessions waiting for extraction", () => {
@@ -448,8 +471,8 @@ test("extraction figures come from the recorded state", () => {
   const report = createStatusReport(config, { timeZone: NEW_YORK }).read();
 
   assert.equal(report.verdict.label, "healthy");
-  assert.equal(rowValue(report, "processed"), "1 session");
-  assert.equal(rowValue(report, "failures"), "1 (1 attempt, short of quarantine)");
+  assert.equal(rowValue(report, "sessions extracted"), "1");
+  assert.equal(rowValue(report, "retrying after failure"), "1 session (1 attempt)");
   assert.notEqual(rowValue(report, "last extraction"), "never");
 });
 
@@ -487,15 +510,13 @@ test("the corpus block counts topics, facts, prompts and sessions", () => {
   assert.equal(corpusRow(report, "sessions").value, "229");
 });
 
-test("the facts-per-topic spread names the largest topic beside its count", () => {
+test("the facts-per-topic spread is a row of its own, and the largest topic another", () => {
   const report = summarizeStatus({ ...extractionReadings(), ...corpusReadings() }, {
     now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
   });
 
-  assert.equal(
-    corpusRow(report, "topics").note,
-    "facts/topic   min 4  median 31  max 587 appsync_key_secrets_manager"
-  );
+  assert.equal(corpusRow(report, "facts per topic").value, "min 4    median 31    max 587");
+  assert.equal(corpusRow(report, "largest topic").value, "appsync_key_secrets_manager");
 });
 
 test("fact growth is reported over both windows, and the index size and refresh beside it", () => {
@@ -503,9 +524,8 @@ test("fact growth is reported over both windows, and the index size and refresh 
     now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
   });
 
-  assert.equal(corpusRow(report, "facts").note, "added   7d 585   30d 1,204");
-  assert.equal(corpusRow(report, "index.db").value, "5.0 MB");
-  assert.equal(corpusRow(report, "index.db").note, "refresh took 61 ms");
+  assert.equal(corpusRow(report, "facts added").value, "7d 585    30d 1,204");
+  assert.equal(corpusRow(report, "index.db").value, "5.0 MB    refresh took 61 ms");
 });
 
 test("nothing in the corpus block reaches the verdict, however lopsided it reads", () => {
@@ -538,9 +558,10 @@ test("an empty corpus renders the block with zeros rather than failing", () => {
   assert.equal(corpusRow(report, "facts").value, "0");
   assert.equal(corpusRow(report, "prompts").value, "0");
   assert.equal(corpusRow(report, "sessions").value, "0");
-  assert.equal(corpusRow(report, "topics").note, "facts/topic   min 0  median 0  max 0");
-  assert.match(corpusRow(report, "facts").note, /^added {3}7d 0 {3}30d 0$/);
-  assert.match(corpusRow(report, "index.db").note, /^refresh took \d+ ms$/);
+  assert.equal(corpusRow(report, "facts per topic").value, "min 0    median 0    max 0");
+  assert.equal(corpusRow(report, "largest topic").value, "none");
+  assert.equal(corpusRow(report, "facts added").value, "7d 0    30d 0");
+  assert.match(corpusRow(report, "index.db").value, /^[\d.]+ MB {4}refresh took \d+ ms$/);
 });
 
 // --- Index statistics over a fixture corpus ---
@@ -570,10 +591,8 @@ test("the spread over a fixture corpus names the largest topic", () => {
 
   const report = statusOver(config);
 
-  assert.equal(
-    corpusRow(report, "topics").note,
-    "facts/topic   min 1  median 2  max 4 junk_drawer"
-  );
+  assert.equal(corpusRow(report, "facts per topic").value, "min 1    median 2    max 4");
+  assert.equal(corpusRow(report, "largest topic").value, "junk_drawer");
 });
 
 test("a topic that parsed no facts is counted in the minimum rather than skipped", () => {
@@ -583,10 +602,8 @@ test("a topic that parsed no facts is counted in the minimum rather than skipped
 
   const report = statusOver(config);
 
-  assert.equal(
-    corpusRow(report, "topics").note,
-    "facts/topic   min 0  median 0  max 2 populated"
-  );
+  assert.equal(corpusRow(report, "facts per topic").value, "min 0    median 0    max 2");
+  assert.equal(corpusRow(report, "largest topic").value, "populated");
 });
 
 test("an even number of topics reports a median some topic really has", () => {
@@ -598,7 +615,7 @@ test("an even number of topics reports a median some topic really has", () => {
 
   const report = statusOver(config);
 
-  assert.match(corpusRow(report, "topics").note, /median 1 /);
+  assert.match(corpusRow(report, "facts per topic").value, /median 1 /);
 });
 
 test("facts added are bucketed by fact date against the injected clock", () => {
@@ -617,7 +634,7 @@ test("facts added are bucketed by fact date against the injected clock", () => {
 
   const report = statusOver(config, { at: now });
 
-  assert.equal(corpusRow(report, "facts").note, "added   7d 3   30d 5");
+  assert.equal(corpusRow(report, "facts added").value, "7d 3    30d 5");
 });
 
 test("a window counts back in local dates, so it does not drift an hour over DST", () => {
@@ -627,7 +644,7 @@ test("a window counts back in local dates, so it does not drift an hour over DST
 
   const report = statusOver(config, { at: justAfterLocalMidnightAfterSpringForward });
 
-  assert.equal(corpusRow(report, "facts").note, "added   7d 1   30d 2");
+  assert.equal(corpusRow(report, "facts added").value, "7d 1    30d 2");
 });
 
 test("an undated fact counts towards the total but towards no growth window", () => {
@@ -637,7 +654,7 @@ test("an undated fact counts towards the total but towards no growth window", ()
   const report = statusOver(config);
 
   assert.equal(corpusRow(report, "facts").value, "1");
-  assert.equal(corpusRow(report, "facts").note, "added   7d 0   30d 0");
+  assert.equal(corpusRow(report, "facts added").value, "7d 0    30d 0");
 });
 
 test("counts past a thousand are separated wherever the block reports them", () => {
@@ -656,24 +673,28 @@ test("counts past a thousand are separated wherever the block reports them", () 
   );
 
   assert.equal(
-    corpusRow(report, "topics").note,
-    "facts/topic   min 1,000  median 2,000  max 90,000 junk_drawer"
+    corpusRow(report, "facts per topic").value,
+    "min 1,000    median 2,000    max 90,000"
   );
-  assert.equal(corpusRow(report, "facts").note, "added   7d 5,000   30d 12,000");
+  assert.equal(corpusRow(report, "facts added").value, "7d 5,000    30d 12,000");
 });
 
 // --- The search block ---
 
 function searchRow(report, label) {
-  const block = report.blocks.find((candidate) => candidate.title === "SEARCH");
-  assert.ok(block, "the report should carry a SEARCH block");
-  const row = block.rows.find((candidate) => candidate.label === label);
+  const row = searchBlockOf(report).rows.find((candidate) => candidate.label === label);
   assert.ok(row, `the SEARCH block should carry a "${label}" row`);
   return row;
 }
 
+function searchBlockOf(report) {
+  const block = report.blocks.find((candidate) => candidate.title === "SEARCH");
+  assert.ok(block, "the report should carry a SEARCH block");
+  return block;
+}
+
 function searchColumns(report) {
-  return report.blocks.find((candidate) => candidate.title === "SEARCH").columns;
+  return searchBlockOf(report).columns;
 }
 
 function appendSearches(config, entries) {
@@ -702,24 +723,36 @@ test("the search block counts each source over seven days, thirty days and all t
   const report = summarizeStatus({ ...extractionReadings(), search: summary }, { now: () => now });
 
   assert.deepEqual(searchColumns(report), ["7d", "30d", "all-time"]);
-  assert.deepEqual(searchRow(report, "automatic").values, ["1", "1", "1"]);
-  assert.deepEqual(searchRow(report, "explicit").values, ["1", "1", "2"]);
-  assert.deepEqual(searchRow(report, "smoke").values, ["0", "1", "1"]);
+  assert.deepEqual(searchRow(report, "Claude searched").values, ["1", "1", "1"]);
+  assert.deepEqual(searchRow(report, "you searched").values, ["1", "1", "2"]);
+  assert.deepEqual(searchRow(report, "self-tests").values, ["0", "1", "1"]);
 });
 
-test("automatic is its own row and is never folded into a total", () => {
+test("every source the read path can write has a label on the report", () => {
+  const labelled = summarizeStatus({ ...extractionReadings() }, { now: () => Date.now() });
+
+  assert.deepEqual(
+    SOURCES.filter((source) => !SEARCH_ROW_LABELS[source]),
+    []
+  );
+  assert.deepEqual(
+    searchBlockOf(labelled).rows.filter((row) => !row.label),
+    []
+  );
+});
+
+test("the search block names who decided to search, one row each, folded into no total", () => {
   const report = summarizeStatus({ ...extractionReadings() }, {
     now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
   });
   const labels = report.blocks.find((block) => block.title === "SEARCH").rows.map((r) => r.label);
 
   assert.deepEqual(labels, [
-    "automatic",
-    "explicit",
-    "smoke",
-    "returned nothing",
-    "syntax fallbacks",
-    "smoke queries",
+    "Claude searched",
+    "you searched",
+    "self-tests",
+    "found nothing",
+    "bad syntax, retried",
   ]);
 });
 
@@ -735,8 +768,8 @@ test("searches that returned nothing and queries that fell back are counted", ()
   );
   const report = summarizeStatus({ ...extractionReadings(), search: summary }, { now: () => now });
 
-  assert.deepEqual(searchRow(report, "returned nothing").values, ["2", "2", "2"]);
-  assert.deepEqual(searchRow(report, "syntax fallbacks").values, ["2", "2", "2"]);
+  assert.deepEqual(searchRow(report, "found nothing").values, ["2", "2", "2"]);
+  assert.deepEqual(searchRow(report, "bad syntax, retried").values, ["2", "2", "2"]);
 });
 
 test("a deliberately widened search is not reported as a signal about health", () => {
@@ -759,7 +792,7 @@ test("an entry late in the local evening lands in the local day, not the UTC one
     timeZone: NEW_YORK,
   });
 
-  assert.deepEqual(summary.tallies.find((t) => t.label === "explicit").counts, [0, 1, 1]);
+  assert.deepEqual(summary.tallies.find((t) => t.key === "explicit").counts, [0, 1, 1]);
 });
 
 test("a search window counts back in local dates across a daylight-saving boundary", () => {
@@ -772,7 +805,7 @@ test("a search window counts back in local dates across a daylight-saving bounda
     { at: justAfterLocalMidnightAfterSpringForward, timeZone: NEW_YORK }
   );
 
-  assert.deepEqual(summary.tallies.find((t) => t.label === "explicit").counts, [1, 2, 2]);
+  assert.deepEqual(summary.tallies.find((t) => t.key === "explicit").counts, [1, 2, 2]);
 });
 
 test("a malformed line in the search log is skipped rather than breaking the report", () => {
@@ -787,8 +820,8 @@ test("a malformed line in the search log is skipped rather than breaking the rep
 
   const report = statusOver(config, { at: now });
 
-  assert.deepEqual(searchRow(report, "explicit").values, ["1", "1", "1"]);
-  assert.deepEqual(searchRow(report, "automatic").values, ["1", "1", "1"]);
+  assert.deepEqual(searchRow(report, "you searched").values, ["1", "1", "1"]);
+  assert.deepEqual(searchRow(report, "Claude searched").values, ["1", "1", "1"]);
 });
 
 test("an entry with an unreadable timestamp counts all-time but in no window", () => {
@@ -798,7 +831,7 @@ test("an entry with an unreadable timestamp counts all-time but in no window", (
     timeZone: NEW_YORK,
   });
 
-  assert.deepEqual(summary.tallies.find((t) => t.label === "explicit").counts, [0, 0, 1]);
+  assert.deepEqual(summary.tallies.find((t) => t.key === "explicit").counts, [0, 0, 1]);
 });
 
 test("an absent search log renders the block with zeros rather than failing", () => {
@@ -806,8 +839,8 @@ test("an absent search log renders the block with zeros rather than failing", ()
 
   const report = statusOver(config);
 
-  assert.deepEqual(searchRow(report, "automatic").values, ["0", "0", "0"]);
-  assert.deepEqual(searchRow(report, "returned nothing").values, ["0", "0", "0"]);
+  assert.deepEqual(searchRow(report, "Claude searched").values, ["0", "0", "0"]);
+  assert.deepEqual(searchRow(report, "found nothing").values, ["0", "0", "0"]);
 });
 
 test("nothing in the search block reaches the verdict, however rarely the read path fires", () => {
@@ -844,7 +877,7 @@ test("reading the status leaves the search log exactly as the read path wrote it
   assert.equal(readFileSync(config.searchLogPath, "utf-8"), before);
 });
 
-test("toc-status prints the search block in aligned columns", () => {
+test("toc-status prints the search block as a table with a header row per window", () => {
   const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
   const config = tempCorpus();
   appendSearches(config, [
@@ -857,33 +890,21 @@ test("toc-status prints the search block in aligned columns", () => {
 
   assert.equal(report.status, 0);
   assert.equal(report.stderr, "");
-  assert.match(report.stdout, /^SEARCH\s+7d\s+30d\s+all-time$/m);
-  assert.match(report.stdout, /^ {2}automatic\s+1\s+1\s+1$/m);
-  assert.match(report.stdout, /^ {2}returned nothing\s+1\s+1\s+1$/m);
-  assert.match(report.stdout, /^ {2}syntax fallbacks\s+0\s+0\s+0$/m);
-});
-
-test("--markdown gives the search block one column per window", () => {
-  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
-  const config = tempCorpus();
-  appendSearches(config, [searched({ at: now, source: "automatic" })]);
-
-  const report = runCli(STATUS_REPORT, { config, args: ["--markdown"] });
-
-  assert.equal(report.status, 0);
-  assert.match(report.stdout, /^## SEARCH$/m);
-  assert.match(report.stdout, /^\| reading \| 7d \| 30d \| all-time \|$/m);
-  assert.match(report.stdout, /^\| automatic \| 1 \| 1 \| 1 \|$/m);
+  assert.match(report.stdout, /^┌─ SEARCH ─+┬.+┐$/m);
+  assert.match(report.stdout, /^│ +│ +7d │ +30d │ +all-time │$/m);
+  assert.match(report.stdout, /^│ Claude searched +│ +1 │ +1 │ +1 │$/m);
+  assert.match(report.stdout, /^│ found nothing +│ +1 │ +1 │ +1 │$/m);
+  assert.match(report.stdout, /^│ bad syntax, retried +│ +0 │ +0 │ +0 │$/m);
 });
 
 // --- Smoke queries ---
 
+// Smoke is not a row on the report: it runs live on every invocation and speaks only
+// through the verdict, where a corpus that can no longer answer its own known-good queries
+// is blockage rather than a count.
+
 function smokeReadings(overrides = {}) {
   return { smoke: { configured: 6, failed: 0, ...overrides } };
-}
-
-function smokeRow(report) {
-  return searchRow(report, "smoke queries");
 }
 
 const EXTRACTED_ONCE = { processed: { count: 1, lastAt: AFTERNOON_ON_27_AUGUST_IN_NEW_YORK } };
@@ -893,11 +914,11 @@ function summarizeWithSmoke(smoke) {
   return summarizeStatus({ ...extractionReadings(EXTRACTED_ONCE), ...smoke }, { now: () => now });
 }
 
-test("a passing smoke run says so on the report rather than staying silent", () => {
+test("a passing smoke run is healthy and takes no row of its own on the report", () => {
   const report = summarizeWithSmoke(smokeReadings());
 
-  assert.equal(smokeRow(report).value, "passed (6 of 6)");
   assert.equal(report.verdict.label, "healthy");
+  assert.doesNotMatch(renderStatus(report), /passed \(6 of 6\)/);
 });
 
 test("failing smoke queries are a problem naming how many of how many failed", () => {
@@ -905,13 +926,11 @@ test("failing smoke queries are a problem naming how many of how many failed", (
 
   assert.equal(report.verdict.label, "1 problem");
   assert.deepEqual(report.verdict.problems, ["smoke queries FAILED (2 of 6)"]);
-  assert.equal(smokeRow(report).value, "FAILED (2 of 6)");
 });
 
-test("a corpus with no smoke queries configured says so and is not a problem", () => {
+test("a corpus with no smoke queries configured has nothing to fail and is not a problem", () => {
   const report = summarizeWithSmoke(smokeReadings({ configured: 0 }));
 
-  assert.equal(smokeRow(report).value, "none configured");
   assert.equal(report.verdict.label, "healthy");
   assert.deepEqual(report.verdict.problems, []);
 });
@@ -931,12 +950,13 @@ test("status runs the corpus's smoke queries against the corpus it is reporting 
   writeTopic(config, "broadcast_variants", { Context: factsDated(["2026-08-01"]) });
   writeSmokeQueries(config, [
     { query: "something", mode: "facts", expectTopic: "broadcast_variants" },
-    { query: "happened", mode: "facts" },
+    { query: "kinesis", mode: "facts" },
   ]);
+  createStateStore(config).recordExtraction("316972f2-1111-2222-3333-444455556666");
 
   const report = statusOver(config);
 
-  assert.equal(smokeRow(report).value, "passed (2 of 2)");
+  assert.deepEqual(report.verdict.problems, ["smoke queries FAILED (1 of 2)"]);
 });
 
 test("the smoke counts the report prints are not inflated by the report's own run", () => {
@@ -946,7 +966,7 @@ test("the smoke counts the report prints are not inflated by the report's own ru
 
   const report = statusOver(config);
 
-  assert.deepEqual(searchRow(report, "smoke").values, ["0", "0", "0"]);
+  assert.deepEqual(searchRow(report, "self-tests").values, ["0", "0", "0"]);
   assert.equal(existsSync(config.searchLogPath), false);
 });
 
@@ -963,20 +983,8 @@ test("a smoke query the corpus can no longer answer fails the verdict and still 
 
   assert.equal(report.status, 0);
   assert.equal(report.stderr, "");
-  assert.match(report.stdout, /^claude-toc status\s+1 problem$/m);
+  assert.match(report.stdout, /^CLAUDE-TOC STATUS: 1 problem$/m);
   assert.match(report.stdout, /^ {2}! smoke queries FAILED \(1 of 2\)$/m);
-  assert.match(report.stdout, /^ {2}smoke queries\s+FAILED \(1 of 2\)$/m);
-});
-
-test("--markdown carries the smoke line in the search table", () => {
-  const config = tempCorpus();
-  writeTopic(config, "broadcast_variants", { Context: factsDated(["2026-08-01"]) });
-  writeSmokeQueries(config, [{ query: "something", mode: "facts" }]);
-
-  const report = runCli(STATUS_REPORT, { config, args: ["--markdown"] });
-
-  assert.equal(report.status, 0);
-  assert.match(report.stdout, /^\| smoke queries \| passed \(1 of 1\) \|  \|  \|$/m);
 });
 
 // --- The spend block ---
@@ -1023,8 +1031,8 @@ test("the spend block reports calls and dollars over seven days, thirty days and
   const report = statusOver(config, { at: now });
 
   assert.deepEqual(spendBlock(report).columns, ["7d", "30d", "all-time"]);
-  assert.deepEqual(spendRow(report, "calls").values, ["1", "2", "3"]);
-  assert.deepEqual(spendRow(report, "estimated").values, ["$4.50", "$9.00", "$13.50"]);
+  assert.deepEqual(spendRow(report, "model calls").values, ["1", "2", "3"]);
+  assert.deepEqual(spendRow(report, "estimated cost").values, ["$4.50", "$9.00", "$13.50"]);
 });
 
 test("the spend block is the last block on the report", () => {
@@ -1047,9 +1055,9 @@ test("calls whose model has no rate are counted per window and left out of the d
 
   const report = statusOver(config, { at: now });
 
-  assert.deepEqual(spendRow(report, "unpriced").values, ["1", "1", "2"]);
-  assert.deepEqual(spendRow(report, "calls").values, ["2", "2", "3"]);
-  assert.deepEqual(spendRow(report, "estimated").values, ["$4.50", "$4.50", "$4.50"]);
+  assert.deepEqual(spendRow(report, "calls with no rate").values, ["1", "1", "2"]);
+  assert.deepEqual(spendRow(report, "model calls").values, ["2", "2", "3"]);
+  assert.deepEqual(spendRow(report, "estimated cost").values, ["$4.50", "$4.50", "$4.50"]);
 });
 
 test("a call made late in the local evening falls in the local day it was recorded on", () => {
@@ -1063,7 +1071,7 @@ test("a call made late in the local evening falls in the local day it was record
   // York even though its timestamp is already the 27th in UTC.
   const report = statusOver(config, { at: Date.parse("2026-09-02T15:00:00Z") });
 
-  assert.deepEqual(spendRow(report, "calls").values, ["0", "1", "1"]);
+  assert.deepEqual(spendRow(report, "model calls").values, ["0", "1", "1"]);
 });
 
 test("a spend window counts back in local dates across a daylight-saving boundary", () => {
@@ -1076,7 +1084,7 @@ test("a spend window counts back in local dates across a daylight-saving boundar
 
   const report = statusOver(config, { at: justAfterLocalMidnightAfterSpringForward });
 
-  assert.deepEqual(spendRow(report, "calls").values, ["1", "2", "2"]);
+  assert.deepEqual(spendRow(report, "model calls").values, ["1", "2", "2"]);
 });
 
 test("a call with no local date on it falls in no window but still counts all-time", () => {
@@ -1086,7 +1094,7 @@ test("a call with no local date on it falls in no window but still counts all-ti
 
   const report = statusOver(config, { at: now });
 
-  assert.deepEqual(spendRow(report, "calls").values, ["0", "0", "1"]);
+  assert.deepEqual(spendRow(report, "model calls").values, ["0", "0", "1"]);
 });
 
 test("a malformed line in the spend log is skipped rather than breaking the report", () => {
@@ -1100,7 +1108,7 @@ test("a malformed line in the spend log is skipped rather than breaking the repo
 
   const report = statusOver(config, { at: now });
 
-  assert.deepEqual(spendRow(report, "calls").values, ["1", "1", "1"]);
+  assert.deepEqual(spendRow(report, "model calls").values, ["1", "1", "1"]);
 });
 
 test("an amount too small for cents is reported the way the spend report reports it", () => {
@@ -1112,7 +1120,7 @@ test("an amount too small for cents is reported the way the spend report reports
 
   const report = statusOver(config, { at: now });
 
-  assert.deepEqual(spendRow(report, "estimated").values, ["$0.0030", "$0.0030", "$0.0030"]);
+  assert.deepEqual(spendRow(report, "estimated cost").values, ["$0.0030", "$0.0030", "$0.0030"]);
 });
 
 test("an absent spend log renders the block with zeros rather than failing", () => {
@@ -1120,9 +1128,9 @@ test("an absent spend log renders the block with zeros rather than failing", () 
 
   const report = statusOver(config);
 
-  assert.deepEqual(spendRow(report, "calls").values, ["0", "0", "0"]);
-  assert.deepEqual(spendRow(report, "estimated").values, ["$0.00", "$0.00", "$0.00"]);
-  assert.deepEqual(spendRow(report, "unpriced").values, ["0", "0", "0"]);
+  assert.deepEqual(spendRow(report, "model calls").values, ["0", "0", "0"]);
+  assert.deepEqual(spendRow(report, "estimated cost").values, ["$0.00", "$0.00", "$0.00"]);
+  assert.deepEqual(spendRow(report, "calls with no rate").values, ["0", "0", "0"]);
 });
 
 test("the spend block names the bill it lands on and where to override the rates", () => {
@@ -1153,19 +1161,16 @@ test("nothing in the spend block reaches the verdict, however much went unpriced
   assert.deepEqual(report.verdict.problems, []);
 });
 
-test("a dollar amount too wide for its column keeps the column's right edge", () => {
+test("a dollar amount is printed in full and right-aligned against its column's edge", () => {
   const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
   const config = tempCorpus();
   appendCalls(config, [
     called({ localDate: localDay(now, 0), inputTokens: 400_000_000, outputTokens: 0 }),
   ]);
 
-  const lines = renderStatus(statusOver(config, { at: now })).split("\n");
-  const heading = lines.findIndex((line) => line.startsWith("SPEND"));
-  const block = lines.slice(heading, heading + 4);
+  const rendered = renderStatus(statusOver(config, { at: now }));
 
-  assert.match(block[2], /^ {2}estimated\s+\$1200\.00\s+\$1200\.00\s+\$1200\.00$/);
-  assert.deepEqual(new Set(block.map((line) => line.length)).size, 1);
+  assert.match(rendered, /^│ estimated cost +│( +\$1200\.00 │){3}$/m);
 });
 
 test("toc-status prints the spend block in the same columns as the search block", () => {
@@ -1181,26 +1186,64 @@ test("toc-status prints the spend block in the same columns as the search block"
 
   assert.equal(report.status, 0);
   assert.equal(report.stderr, "");
-  assert.match(report.stdout, /^SPEND\s+7d\s+30d\s+all-time$/m);
-  assert.match(report.stdout, /^ {2}calls\s+1\s+1\s+1$/m);
-  assert.match(report.stdout, /^ {2}estimated(\s+\$4\.50){3}$/m);
-  assert.match(report.stdout, /^ {2}unpriced\s+0\s+0\s+0$/m);
+  assert.match(report.stdout, /^┌─ SPEND ─+┬.+┐$/m);
+  assert.match(report.stdout, /^│ model calls +│ +1 │ +1 │ +1 │$/m);
+  assert.match(report.stdout, /^│ estimated cost +│( +\$4\.50 │){3}$/m);
+  assert.match(report.stdout, /^│ calls with no rate +│ +0 │ +0 │ +0 │$/m);
   assert.match(report.stdout, /^Billed to the AWS profile claudecode in us-west-2\.$/m);
   assert.match(report.stdout, /^Rates are list prices; edit \S+model-rates\.json to match your bill\.$/m);
 });
 
-test("--markdown gives the spend block one column per window and keeps the footer", () => {
-  const config = tempCorpus();
-  createSpendLog(config).record({ model: SONNET, inputTokens: 1_000_000, outputTokens: 100_000 });
+// --- Rendering ---
 
-  const report = runCli(STATUS_REPORT, { config, args: ["--markdown"] });
+function renderedBlocks(report) {
+  return renderStatus(report)
+    .split("\n")
+    .filter((line) => /^[┌├└│]/.test(line));
+}
 
-  assert.equal(report.status, 0);
-  assert.match(report.stdout, /^## SPEND$/m);
-  assert.match(report.stdout, /^\| calls \| 1 \| 1 \| 1 \|$/m);
-  assert.match(report.stdout, /^\| estimated \| \$4\.50 \| \$4\.50 \| \$4\.50 \|$/m);
-  assert.match(report.stdout, /^\| unpriced \| 0 \| 0 \| 0 \|$/m);
-  assert.match(report.stdout, /^Billed to the AWS profile claudecode in us-west-2\.$/m);
+const lengthsOf = (lines) => new Set(lines.map((line) => line.length));
+
+function wholeReport(overrides = {}) {
+  return summarizeStatus(
+    { ...extractionReadings(EXTRACTED_ONCE), ...corpusReadings(), ...overrides },
+    { now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK }
+  );
+}
+
+test("every line of every table is exactly as long as every other", () => {
+  assert.deepEqual(lengthsOf(renderedBlocks(wholeReport())).size, 1);
+});
+
+test("a reading wider than any other widens all four tables and is printed in full", () => {
+  const aTopicThatGrewAndGrew = "an_appsync_key_secrets_manager_migration_topic_that_grew_and_grew";
+  const widened = wholeReport({
+    corpus: {
+      ...corpusReadings().corpus,
+      factsPerTopic: { min: 4, median: 31, max: 587, largest: aTopicThatGrewAndGrew },
+    },
+  });
+
+  const narrowLines = renderedBlocks(wholeReport());
+  const widenedLines = renderedBlocks(widened);
+
+  assert.ok(widenedLines[0].length > narrowLines[0].length);
+  assert.deepEqual(lengthsOf(widenedLines).size, 1);
+  assert.match(renderStatus(widened), new RegExp(aTopicThatGrewAndGrew));
+});
+
+test("each block carries its title in its top border, where no row can be read as one", () => {
+  const rendered = renderStatus(wholeReport());
+
+  for (const title of ["EXTRACTION", "CORPUS", "SEARCH", "SPEND"]) {
+    assert.match(rendered, new RegExp(`^┌─ ${title} ─+[┬─].+┐$`, "m"));
+  }
+});
+
+test("a windowed block heads its columns with an empty title cell beside the window names", () => {
+  const rendered = renderStatus(wholeReport());
+
+  assert.equal(rendered.match(/^│ +│ +7d │ +30d │ +all-time │$/gm).length, 2);
 });
 
 // --- The command line ---
@@ -1213,11 +1256,11 @@ test("toc-status prints a verdict and the extraction block, and exits 0", () => 
 
   assert.equal(report.status, 0);
   assert.equal(report.stderr, "");
-  assert.match(report.stdout, /^claude-toc status\s+healthy$/m);
-  assert.match(report.stdout, /^EXTRACTION$/m);
-  assert.match(report.stdout, /last extraction\s+\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
-  assert.match(report.stdout, /hook heartbeat/);
-  assert.match(report.stdout, /sessions waiting\s+0/);
+  assert.match(report.stdout, /^CLAUDE-TOC STATUS: healthy$/m);
+  assert.match(report.stdout, /^┌─ EXTRACTION ─+/m);
+  assert.match(report.stdout, /│ last extraction +│ \d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+  assert.match(report.stdout, /│ last checked for work +│/);
+  assert.match(report.stdout, /│ sessions waiting +│ 0 +│/);
 });
 
 test("an empty corpus reports never run on the command line and still exits 0", () => {
@@ -1226,10 +1269,10 @@ test("an empty corpus reports never run on the command line and still exits 0", 
   const report = runCli(STATUS_REPORT, { config });
 
   assert.equal(report.status, 0);
-  assert.match(report.stdout, /^claude-toc status\s+never run$/m);
+  assert.match(report.stdout, /^CLAUDE-TOC STATUS: never run$/m);
 });
 
-test("a blocked queue names the problem under the verdict and still exits 0", () => {
+test("a blocked queue names the problem under the verdict as prose and still exits 0", () => {
   const config = tempCorpus();
   idleSessionWithUnreadTurns(config, "316972f2-1111-2222-3333-444455556666");
   createStateStore(config).claimSweep();
@@ -1238,20 +1281,43 @@ test("a blocked queue names the problem under the verdict and still exits 0", ()
 
   assert.equal(report.status, 0);
   assert.equal(report.stderr, "");
-  assert.match(report.stdout, /^claude-toc status\s+1 problem$/m);
+  assert.match(report.stdout, /^CLAUDE-TOC STATUS: 1 problem$/m);
   assert.match(report.stdout, /^ {2}! nothing extracted yet with 1 session waiting$/m);
 });
 
-test("--markdown lists the problems beneath the verdict heading", () => {
+test("two problems on the command line are counted in the plural and still exit 0", () => {
   const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", { Context: factsDated(["2026-08-01"]) });
+  writeSmokeQueries(config, [
+    { query: "something", mode: "facts" },
+    { query: "kinesis", mode: "facts" },
+  ]);
   idleSessionWithUnreadTurns(config, "316972f2-1111-2222-3333-444455556666");
   createStateStore(config).claimSweep();
 
-  const report = runCli(STATUS_REPORT, { config, args: ["--markdown"] });
+  const report = runCli(STATUS_REPORT, { config });
 
   assert.equal(report.status, 0);
-  assert.match(report.stdout, /^# claude-toc status: 1 problem$/m);
-  assert.match(report.stdout, /^- nothing extracted yet with 1 session waiting$/m);
+  assert.equal(report.stderr, "");
+  assert.match(report.stdout, /^CLAUDE-TOC STATUS: 2 problems$/m);
+});
+
+test("each problem is named on its own prose line above the tables", () => {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const report = summarizeStatus(
+    extractionReadings({
+      processed: { count: 4, lastAt: now - 31 * AN_HOUR },
+      waiting: 2,
+      lease: leaseExpired(now, 2 * AN_HOUR),
+    }),
+    { now: () => now }
+  );
+
+  assert.deepEqual(renderStatus(report).split("\n").slice(0, 3), [
+    "CLAUDE-TOC STATUS: 2 problems",
+    "  ! no extraction in 31h with 2 sessions waiting",
+    "  ! lease held by sweep-316972f2 expired 2h ago with no extraction since",
+  ]);
 });
 
 test("the report carries no colour or terminal escape codes", () => {
@@ -1271,20 +1337,17 @@ test("running the status command writes nothing into the search log", () => {
   assert.equal(existsSync(config.searchLogPath), false);
 });
 
-test("--markdown renders the block as a table under the verdict as a heading", () => {
+test("there is one rendering, so an argument asking for another is rejected", () => {
   const config = tempCorpus();
-  createStateStore(config).recordExtraction("316972f2-1111-2222-3333-444455556666");
 
   const report = runCli(STATUS_REPORT, { config, args: ["--markdown"] });
 
-  assert.equal(report.status, 0);
-  assert.equal(report.stderr, "");
-  assert.match(report.stdout, /^# claude-toc status: healthy$/m);
-  assert.match(report.stdout, /^## EXTRACTION$/m);
-  assert.match(report.stdout, /^\| last extraction \| .+ \|$/m);
+  assert.equal(report.status, 2);
+  assert.equal(report.stdout, "");
+  assert.match(report.stderr, /unexpected argument --markdown/);
 });
 
-test("toc-status prints the corpus block with the largest topic named", () => {
+test("toc-status prints the corpus block with the largest topic on a row of its own", () => {
   const config = tempCorpus();
   writeTopic(config, "small", { Context: factsDated(["2026-08-01"]) });
   writeTopic(config, "junk_drawer", { Context: factsDated(["2026-08-01", "2026-08-02"]) });
@@ -1293,20 +1356,10 @@ test("toc-status prints the corpus block with the largest topic named", () => {
 
   assert.equal(report.status, 0);
   assert.equal(report.stderr, "");
-  assert.match(report.stdout, /^CORPUS$/m);
-  assert.match(report.stdout, /^ {2}topics\s+2\s+facts\/topic\s+min 1\s+median 1\s+max 2 junk_drawer$/m);
-  assert.match(report.stdout, /^ {2}facts\s+3\s+added\s+7d \d+\s+30d \d+$/m);
-  assert.match(report.stdout, /^ {2}index\.db\s+[\d.]+ MB\s+refresh took \d+ ms$/m);
-});
-
-test("--markdown carries the corpus notes in a third column", () => {
-  const config = tempCorpus();
-  writeTopic(config, "junk_drawer", { Context: factsDated(["2026-08-01"]) });
-
-  const report = runCli(STATUS_REPORT, { config, args: ["--markdown"] });
-
-  assert.equal(report.status, 0);
-  assert.match(report.stdout, /^## CORPUS$/m);
-  assert.match(report.stdout, /^\| reading \| value \| note \|$/m);
-  assert.match(report.stdout, /^\| topics \| 1 \| facts\/topic .*max 1 junk_drawer \|$/m);
+  assert.match(report.stdout, /^┌─ CORPUS ─+/m);
+  assert.match(report.stdout, /^│ topics +│ 2 +│$/m);
+  assert.match(report.stdout, /^│ facts per topic +│ min 1 {4}median 1 {4}max 2 +│$/m);
+  assert.match(report.stdout, /^│ largest topic +│ junk_drawer +│$/m);
+  assert.match(report.stdout, /^│ facts added +│ 7d \d+ {4}30d \d+ +│$/m);
+  assert.match(report.stdout, /^│ index\.db +│ [\d.]+ MB {4}refresh took \d+ ms +│$/m);
 });
