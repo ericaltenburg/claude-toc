@@ -13,6 +13,7 @@ import {
   appendSessions,
   REPO_ROOT,
   tempCorpus,
+  writeSmokeQueries,
   writeTopic,
 } from "./support/corpus.js";
 
@@ -746,6 +747,21 @@ test("a smoke run is logged under its own source, not as someone asking", () => 
   });
 });
 
+test("a smoke run asked not to log leaves no trace in the search log", () => {
+  withSearch((config, search) => {
+    writeTopic(config, "broadcast_variants", FACTS);
+    writeSmokeQueries(config, [
+      { query: "variants", mode: "facts" },
+      { query: "dynamodb", mode: "facts" },
+    ]);
+
+    const report = search.smoke({ log: false });
+
+    assert.equal(report.passed, true);
+    assert.deepEqual(logLines(config), []);
+  });
+});
+
 test("a smoke query that returns nothing fails the run", () => {
   withSearch((config, search) => {
     writeTopic(config, "broadcast_variants", FACTS);
@@ -784,7 +800,3 @@ test("smoke queries live with the corpus, not in this repository", () => {
   assert.ok(config.smokeQueriesPath.startsWith(config.corpusDir));
   assert.equal(existsSync(join(REPO_ROOT, "smoke-queries.json")), false);
 });
-
-function writeSmokeQueries(config, queries) {
-  writeFileSync(config.smokeQueriesPath, JSON.stringify({ queries }, null, 2));
-}

@@ -74,6 +74,11 @@ export function topicPath(config, id) {
   return join(config.topicsDir, `${id}.md`);
 }
 
+export function writeSmokeQueries(config, queries) {
+  mkdirSync(config.corpusDir, { recursive: true });
+  writeFileSync(config.smokeQueriesPath, JSON.stringify({ queries }, null, 2));
+}
+
 export function appendPrompts(config, records) {
   const lines = records.map((record) =>
     typeof record === "string" ? record : JSON.stringify(promptRecord(record))

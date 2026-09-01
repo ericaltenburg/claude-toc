@@ -160,3 +160,8 @@ Status carries a **verdict**, which names only what is **blocked** — work that
 and is not getting done. A recorded failure the system has already recovered from is
 reported but does not reach the verdict. Absence of activity is not blockage: a quiet
 week is healthy. Having never run is its own verdict, distinct from healthy.
+
+Status runs the corpus's smoke queries every time, with search logging suppressed so the
+report never inflates the smoke count it prints. Smoke queries that fail are blockage: the
+corpus can no longer answer questions it is known to have answered. A corpus with no smoke
+queries configured has nothing to fail and is not a problem.

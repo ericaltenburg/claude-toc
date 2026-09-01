@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { createConfig } from "./config.js";
 import { localDateParts } from "./parse.js";
-import { searchLogEntries, SOURCES } from "./search.js";
+import { createSearch, searchLogEntries, SOURCES } from "./search.js";
 import { openIndex } from "./search-index.js";
 import { createSpendLog, dollars, UNDATED } from "./spend.js";
 import { createStateStore } from "./state.js";
@@ -36,9 +36,26 @@ export function createStatusReport(
         corpus: corpusReadings(at),
         search: searchReadings(at),
         spend: spendReadings(at),
+        smoke: smokeReadings(),
       },
       { now: () => at, timeZone, staleAfterMs }
     );
+  }
+
+  // Suppressed logging is what makes this safe to do on every invocation: without it each
+  // run would append a line per query to the log whose smoke count this same report
+  // prints, so the report would spend forever inflating its own numbers.
+  function smokeReadings() {
+    const search = createSearch(config, { timeZone });
+    try {
+      const { results } = search.smoke({ log: false });
+      return {
+        configured: results.length,
+        failed: results.filter((result) => !result.passed).length,
+      };
+    } finally {
+      search.close();
+    }
   }
 
   function spendReadings(at) {
@@ -283,13 +300,14 @@ export function summarizeStatus(
   const corpus = { ...NOTHING_INDEXED, ...readings.corpus };
   const search = readings.search ?? summarizeSearchLog([], { at, timeZone });
   const spend = { ...NOTHING_SPENT, ...readings.spend };
+  const smoke = { ...NOTHING_SMOKED, ...readings.smoke };
 
   return {
-    verdict: verdictFor(extraction, at, staleAfterMs),
+    verdict: verdictFor(extraction, smoke, at, staleAfterMs),
     blocks: [
       extractionBlock(extraction, at, timeZone),
       corpusBlock(corpus),
-      searchBlock(search),
+      searchBlock(search, smoke),
       spendBlock(spend),
     ],
   };
@@ -315,17 +333,22 @@ const NOTHING_INDEXED = {
   bytes: null,
 };
 
+const NOTHING_SMOKED = { configured: 0, failed: 0 };
+
 const NOTHING_SPENT = {
   windows: REPORTING_WINDOWS.map((days) => ({ days, calls: 0, cost: 0, unpriced: 0 })),
   billedTo: null,
 };
 
-function verdictFor(extraction, at, staleAfterMs) {
+// A corpus that has recorded nothing holds no facts, so its smoke queries fail for want of
+// anything to find. That is the empty corpus reporting itself, not a read path that broke.
+function verdictFor(extraction, smoke, at, staleAfterMs) {
   if (hasRecordedNothing(extraction)) return { label: NEVER_RUN, problems: [] };
 
   const problems = [
     queueWithNoExtractionBehindIt(extraction, at, staleAfterMs),
     crashThatNeverRecovered(extraction, at),
+    questionsTheCorpusCanNoLongerAnswer(smoke),
   ].filter(Boolean);
 
   return { label: problems.length ? problemsLabel(problems.length) : HEALTHY, problems };
@@ -352,6 +375,11 @@ function crashThatNeverRecovered(extraction, at) {
   if (extractedSince(extraction, lease.expiresAt)) return null;
   const since = elapsedToTheHour(at - lease.expiresAt);
   return `lease held by ${lease.holder} expired ${since} ago with no extraction since`;
+}
+
+function questionsTheCorpusCanNoLongerAnswer(smoke) {
+  if (!smoke.failed) return null;
+  return `smoke queries ${smokeOutcome(smoke)}`;
 }
 
 function hasExpired(lease, at) {
@@ -415,15 +443,30 @@ function corpusBlock(corpus) {
   };
 }
 
-function searchBlock(search) {
+function searchBlock(search, smoke) {
   return {
     title: "SEARCH",
     columns: search.windows.map(windowHeading),
-    rows: search.tallies.map((tally) => ({
-      label: tally.label,
-      values: tally.counts.map(thousands),
-    })),
+    rows: [
+      ...search.tallies.map((tally) => ({
+        label: tally.label,
+        values: tally.counts.map(thousands),
+      })),
+      { label: "smoke queries", value: smokeValue(smoke) },
+    ],
   };
+}
+
+// The counted rows above are what the log recorded; this one is what just happened, so it
+// carries one value across the windows rather than a count in each.
+function smokeValue(smoke) {
+  return smoke.configured ? smokeOutcome(smoke) : "none configured";
+}
+
+// The verdict names the same outcome as the report line, so both phrase it here.
+function smokeOutcome({ configured, failed }) {
+  const [outcome, counted] = failed ? ["FAILED", failed] : ["passed", configured - failed];
+  return `${outcome} (${counted} of ${configured})`;
 }
 
 function spendBlock({ windows, billedTo }) {
@@ -585,7 +628,7 @@ export function renderStatusAsMarkdown(report) {
     lines.push("", `## ${block.title}`, "", tableRow(headings), tableRow(headings.map(() => "---")));
     for (const row of block.rows) {
       const values = row.values ?? [row.value, row.note ?? ""];
-      lines.push(tableRow([row.label, ...values].slice(0, headings.length)));
+      lines.push(tableRow(toWidth([row.label, ...values], headings.length)));
     }
     if (block.footer?.length) lines.push("", ...block.footer);
   }
@@ -599,6 +642,12 @@ function valueHeadings(block) {
 }
 
 const tableRow = (cells) => `| ${cells.join(" | ")} |`;
+
+// A row carrying one value inside a block laid out in windows still owes the table a cell
+// per heading, or the row it renders belongs to a different table than its header.
+function toWidth(cells, width) {
+  return Array.from({ length: width }, (_, i) => cells[i] ?? "");
+}
 
 // --- CLI ---
 

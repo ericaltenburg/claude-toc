@@ -324,7 +324,7 @@ export function createSearch(
       .sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
   }
 
-  function smoke() {
+  function smoke({ log = true } = {}) {
     const queries = loadSmokeQueries(config);
     if (!queries) {
       return {
@@ -335,7 +335,7 @@ export function createSearch(
     }
 
     const results = queries.map((entry) => {
-      const result = search({ ...entry, source: "smoke" });
+      const result = search({ ...entry, source: "smoke", log });
       const topics = new Set(
         [...(result.facts?.rows ?? []), ...(result.overview?.rows ?? [])].map((row) => row.topic)
       );

@@ -18,6 +18,7 @@ import {
   idleFor,
   runCli,
   tempCorpus,
+  writeSmokeQueries,
   writeTopic,
   writeTranscript,
   AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
@@ -712,7 +713,14 @@ test("automatic is its own row and is never folded into a total", () => {
   });
   const labels = report.blocks.find((block) => block.title === "SEARCH").rows.map((r) => r.label);
 
-  assert.deepEqual(labels, ["automatic", "explicit", "smoke", "returned nothing", "syntax fallbacks"]);
+  assert.deepEqual(labels, [
+    "automatic",
+    "explicit",
+    "smoke",
+    "returned nothing",
+    "syntax fallbacks",
+    "smoke queries",
+  ]);
 });
 
 test("searches that returned nothing and queries that fell back are counted", () => {
@@ -826,6 +834,8 @@ test("nothing in the search block reaches the verdict, however rarely the read p
 test("reading the status leaves the search log exactly as the read path wrote it", () => {
   const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
   const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", { Context: factsDated(["2026-08-01"]) });
+  writeSmokeQueries(config, [{ query: "something", mode: "facts" }]);
   appendSearches(config, [searched({ at: now })]);
   const before = readFileSync(config.searchLogPath, "utf-8");
 
@@ -864,6 +874,109 @@ test("--markdown gives the search block one column per window", () => {
   assert.match(report.stdout, /^## SEARCH$/m);
   assert.match(report.stdout, /^\| reading \| 7d \| 30d \| all-time \|$/m);
   assert.match(report.stdout, /^\| automatic \| 1 \| 1 \| 1 \|$/m);
+});
+
+// --- Smoke queries ---
+
+function smokeReadings(overrides = {}) {
+  return { smoke: { configured: 6, failed: 0, ...overrides } };
+}
+
+function smokeRow(report) {
+  return searchRow(report, "smoke queries");
+}
+
+const EXTRACTED_ONCE = { processed: { count: 1, lastAt: AFTERNOON_ON_27_AUGUST_IN_NEW_YORK } };
+
+function summarizeWithSmoke(smoke) {
+  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  return summarizeStatus({ ...extractionReadings(EXTRACTED_ONCE), ...smoke }, { now: () => now });
+}
+
+test("a passing smoke run says so on the report rather than staying silent", () => {
+  const report = summarizeWithSmoke(smokeReadings());
+
+  assert.equal(smokeRow(report).value, "passed (6 of 6)");
+  assert.equal(report.verdict.label, "healthy");
+});
+
+test("failing smoke queries are a problem naming how many of how many failed", () => {
+  const report = summarizeWithSmoke(smokeReadings({ failed: 2 }));
+
+  assert.equal(report.verdict.label, "1 problem");
+  assert.deepEqual(report.verdict.problems, ["smoke queries FAILED (2 of 6)"]);
+  assert.equal(smokeRow(report).value, "FAILED (2 of 6)");
+});
+
+test("a corpus with no smoke queries configured says so and is not a problem", () => {
+  const report = summarizeWithSmoke(smokeReadings({ configured: 0 }));
+
+  assert.equal(smokeRow(report).value, "none configured");
+  assert.equal(report.verdict.label, "healthy");
+  assert.deepEqual(report.verdict.problems, []);
+});
+
+test("a corpus that has recorded nothing does not report its own emptiness as smoke failure", () => {
+  const report = summarizeStatus(
+    { ...extractionReadings(), ...smokeReadings({ configured: 6, failed: 6 }) },
+    { now: () => AFTERNOON_ON_27_AUGUST_IN_NEW_YORK }
+  );
+
+  assert.equal(report.verdict.label, "never run");
+  assert.deepEqual(report.verdict.problems, []);
+});
+
+test("status runs the corpus's smoke queries against the corpus it is reporting on", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", { Context: factsDated(["2026-08-01"]) });
+  writeSmokeQueries(config, [
+    { query: "something", mode: "facts", expectTopic: "broadcast_variants" },
+    { query: "happened", mode: "facts" },
+  ]);
+
+  const report = statusOver(config);
+
+  assert.equal(smokeRow(report).value, "passed (2 of 2)");
+});
+
+test("the smoke counts the report prints are not inflated by the report's own run", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", { Context: factsDated(["2026-08-01"]) });
+  writeSmokeQueries(config, [{ query: "something", mode: "facts" }]);
+
+  const report = statusOver(config);
+
+  assert.deepEqual(searchRow(report, "smoke").values, ["0", "0", "0"]);
+  assert.equal(existsSync(config.searchLogPath), false);
+});
+
+test("a smoke query the corpus can no longer answer fails the verdict and still exits 0", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", { Context: factsDated(["2026-08-01"]) });
+  writeSmokeQueries(config, [
+    { query: "something", mode: "facts" },
+    { query: "kinesis", mode: "facts" },
+  ]);
+  createStateStore(config).recordExtraction("316972f2-1111-2222-3333-444455556666");
+
+  const report = runCli(STATUS_REPORT, { config });
+
+  assert.equal(report.status, 0);
+  assert.equal(report.stderr, "");
+  assert.match(report.stdout, /^claude-toc status\s+1 problem$/m);
+  assert.match(report.stdout, /^ {2}! smoke queries FAILED \(1 of 2\)$/m);
+  assert.match(report.stdout, /^ {2}smoke queries\s+FAILED \(1 of 2\)$/m);
+});
+
+test("--markdown carries the smoke line in the search table", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", { Context: factsDated(["2026-08-01"]) });
+  writeSmokeQueries(config, [{ query: "something", mode: "facts" }]);
+
+  const report = runCli(STATUS_REPORT, { config, args: ["--markdown"] });
+
+  assert.equal(report.status, 0);
+  assert.match(report.stdout, /^\| smoke queries \| passed \(1 of 1\) \|  \|  \|$/m);
 });
 
 // --- The spend block ---
