@@ -1,14 +1,12 @@
-import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { StringDecoder } from "node:string_decoder";
 
-export const EXTRACTION_PROMPT_MARKER = "You are a memory extraction system";
+import { howTheTranscriptOpens } from "./transcript.js";
+
 export const SESSION_IS_IDLE_AFTER_MS = 60 * 60_000;
 export const SESSIONS_PER_SWEEP = 3;
 
 const TRANSCRIPT_SUFFIX = ".jsonl";
-const READ_CHUNK_BYTES = 64 * 1024;
-const BYTES_SCANNED_FOR_THE_FIRST_MESSAGE = 1024 * 1024;
 
 const A_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -103,65 +101,3 @@ function statOrNull(path) {
   }
 }
 
-// --- How a transcript opens ---
-
-export function howTheTranscriptOpens(transcriptPath) {
-  let cwd = null;
-
-  for (const record of openingRecordsOf(transcriptPath)) {
-    cwd ??= typeof record?.cwd === "string" ? record.cwd : null;
-
-    const text = textOf(record);
-    if (!text) continue;
-    return { isTheExtractionPrompt: text.includes(EXTRACTION_PROMPT_MARKER), cwd };
-  }
-
-  return { isTheExtractionPrompt: false, cwd };
-}
-
-function* openingRecordsOf(path) {
-  let fd;
-  try {
-    fd = openSync(path, "r");
-  } catch {
-    return;
-  }
-
-  try {
-    const buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES);
-    const decoder = new StringDecoder("utf-8");
-    let scanned = 0;
-    let pending = "";
-
-    while (scanned < BYTES_SCANNED_FOR_THE_FIRST_MESSAGE) {
-      const read = readSync(fd, buffer, 0, buffer.length, scanned);
-      if (read <= 0) return;
-      scanned += read;
-
-      const lines = (pending + decoder.write(buffer.subarray(0, read))).split("\n");
-      pending = lines.pop();
-      for (const line of lines) {
-        const record = parsedOrNull(line);
-        if (record) yield record;
-      }
-    }
-  } finally {
-    closeSync(fd);
-  }
-}
-
-function parsedOrNull(line) {
-  if (!line.trim()) return null;
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
-}
-
-function textOf(record) {
-  const content = record?.message?.content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.map((block) => (typeof block?.text === "string" ? block.text : "")).join("\n");
-}

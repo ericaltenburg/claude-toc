@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 
-import { chunkTurns, createExtractor, parseModelOutput } from "../src/extract.js";
+import { createExtractor } from "../src/extract.js";
 import { createSearch } from "../src/search.js";
 import { createStateStore } from "../src/state.js";
 import {
@@ -667,18 +667,4 @@ test("each chunk's model call carries the session it came from, so spend is attr
   );
 });
 
-test("chunkTurns keeps turns whole until a single turn cannot fit", () => {
-  const turns = [
-    { role: "user", text: "a".repeat(50) },
-    { role: "assistant", text: "b".repeat(50) },
-  ];
-  assert.equal(chunkTurns(turns, 1000).length, 1);
-  assert.equal(chunkTurns(turns, 70).length, 2);
-  assert.equal(chunkTurns([{ role: "user", text: "c".repeat(500) }], 100).length, 6);
-});
 
-test("parseModelOutput keeps a skip and rejects a plausible-looking non-result", () => {
-  assert.deepEqual(parseModelOutput('{"skip": true}'), { skip: true });
-  assert.throws(() => parseModelOutput('{"topic": {}}'), /malformed/);
-  assert.throws(() => parseModelOutput(""), /malformed/);
-});

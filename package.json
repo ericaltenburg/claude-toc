@@ -4,11 +4,13 @@
   "description": "Topic-scoped memory system for Claude",
   "type": "module",
   "bin": {
-    "ctoc": "./src/cli.js"
+    "toc-search": "./bin/toc-search",
+    "toc-extract": "./bin/toc-extract",
+    "toc-spend": "./bin/toc-spend",
+    "toc-status": "./bin/toc-status"
   },
   "scripts": {
-    "start": "node src/cli.js",
-    "pretest": "node -e \"const [j,n]=process.versions.node.split('.').map(Number); if (j<22 || (j===22 && n<5)) { console.error('claude-toc needs Node >= 22.5 for node:sqlite (see docs/adr/0004); this is '+process.versions.node); process.exit(1) }\"",
+    "pretest":"node -e \"const [j,n]=process.versions.node.split('.').map(Number); if (j<22 || (j===22 && n<5)) { console.error('claude-toc needs Node >= 22.5 for node:sqlite (see docs/adr/0004); this is '+process.versions.node); process.exit(1) }\"",
     "test": "node --disable-warning=ExperimentalWarning --test",
     "search": "./bin/toc-search",
     "extract": "./bin/toc-extract",

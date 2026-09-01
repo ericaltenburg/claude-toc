@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { statSync, writeFileSync } from "node:fs";
 
 import { createStateStore, ATTEMPTS_BEFORE_QUARANTINE } from "../src/state.js";
-import { createSweeper, EXTRACTION_PROMPT_MARKER, SESSIONS_PER_SWEEP } from "../src/sweep.js";
+import { createSweeper, SESSIONS_PER_SWEEP } from "../src/sweep.js";
+import { EXTRACTION_PROMPT_MARKER } from "../src/extract-prompt.js";
 import { idleFor, tempCorpus, writeRawTranscript, writeTranscript } from "./support/corpus.js";
 
 const A_MINUTE = 60_000;

@@ -2,4 +2,4 @@
 set -e
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 exec "${CLAUDE_TOC_NODE:-node}" --disable-warning=ExperimentalWarning \
-  "$here/../src/status.js" "$@"
+  "$here/../src/cli/index.js" status "$@"
