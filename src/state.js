@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "fs";
 
 const STATE_VERSION = 1;
-const EXTRACTION_LEASE_MS = 300_000;
+export const EXTRACTION_LEASE_MS = 300_000;
 export const SWEEP_DEBOUNCE_MS = 60_000;
 export const ATTEMPTS_BEFORE_QUARANTINE = 3;
 export const START_OF_TRANSCRIPT = 0;
@@ -147,10 +147,16 @@ export function createStateStore(
     return true;
   }
 
+  function leaseExpiresAt(extraction) {
+    const startedAt = Date.parse(extraction?.startedAt ?? "");
+    return Number.isFinite(startedAt) ? startedAt + leaseMs : null;
+  }
+
   function acquireExtraction(holder) {
     const state = load();
     const current = state.extraction;
-    if (current && Date.now() - Date.parse(current.startedAt) < leaseMs) return false;
+    const expiresAt = leaseExpiresAt(current);
+    if (current && expiresAt !== null && Date.now() < expiresAt) return false;
 
     state.extraction = { holder, startedAt: new Date().toISOString() };
     save(state);
@@ -185,6 +191,7 @@ export function createStateStore(
     releaseQuarantine,
     snapshot,
     claimSweep,
+    leaseExpiresAt,
     acquireExtraction,
     releaseExtraction,
   };

@@ -10,12 +10,22 @@ import { createSweeper } from "./sweep.js";
 export const HEALTHY = "healthy";
 export const NEVER_RUN = "never run";
 
+const A_SECOND = 1_000;
+const A_MINUTE = 60 * A_SECOND;
+const AN_HOUR = 60 * A_MINUTE;
+const A_DAY = 24 * AN_HOUR;
+
+export const EXTRACTION_IS_STALE_AFTER_MS = A_DAY;
+
 // --- Gathering ---
 
-export function createStatusReport(config, { now = () => Date.now(), timeZone } = {}) {
+export function createStatusReport(
+  config,
+  { now = () => Date.now(), timeZone, staleAfterMs } = {}
+) {
   function read() {
     refreshTheIndex();
-    return summarizeStatus({ extraction: extractionReadings() }, { now, timeZone });
+    return summarizeStatus({ extraction: extractionReadings() }, { now, timeZone, staleAfterMs });
   }
 
   function refreshTheIndex() {
@@ -34,7 +44,7 @@ export function createStatusReport(config, { now = () => Date.now(), timeZone } 
       processed: processedReadings(state.processed),
       waiting: createSweeper(config, store, { now }).waitingSessions().length,
       sweptAt: millisecondsOrNull(state.sweptAt),
-      lease: leaseReadings(state.extraction),
+      lease: leaseReadings(state.extraction, store.leaseExpiresAt(state.extraction)),
       failures: failureReadings(state.failures),
       quarantined: Object.keys(state.quarantined ?? {}).length,
     };
@@ -60,9 +70,13 @@ function failureReadings(failures = {}) {
   };
 }
 
-function leaseReadings(extraction) {
+function leaseReadings(extraction, expiresAt) {
   if (!extraction?.holder) return null;
-  return { holder: extraction.holder, startedAt: millisecondsOrNull(extraction.startedAt) };
+  return {
+    holder: extraction.holder,
+    startedAt: millisecondsOrNull(extraction.startedAt),
+    expiresAt,
+  };
 }
 
 function millisecondsOrNull(isoTimestamp) {
@@ -72,12 +86,15 @@ function millisecondsOrNull(isoTimestamp) {
 
 // --- Summarising ---
 
-export function summarizeStatus(readings, { now = () => Date.now(), timeZone } = {}) {
+export function summarizeStatus(
+  readings,
+  { now = () => Date.now(), timeZone, staleAfterMs = EXTRACTION_IS_STALE_AFTER_MS } = {}
+) {
   const at = now();
   const extraction = { ...NOTHING_RECORDED, ...readings.extraction };
 
   return {
-    verdict: verdictFor(extraction),
+    verdict: verdictFor(extraction, at, staleAfterMs),
     blocks: [extractionBlock(extraction, at, timeZone)],
   };
 }
@@ -91,8 +108,46 @@ const NOTHING_RECORDED = {
   quarantined: 0,
 };
 
-function verdictFor(extraction) {
-  return { label: hasRecordedNothing(extraction) ? NEVER_RUN : HEALTHY, problems: [] };
+function verdictFor(extraction, at, staleAfterMs) {
+  if (hasRecordedNothing(extraction)) return { label: NEVER_RUN, problems: [] };
+
+  const problems = [
+    queueWithNoExtractionBehindIt(extraction, at, staleAfterMs),
+    crashThatNeverRecovered(extraction, at),
+  ].filter(Boolean);
+
+  return { label: problems.length ? problemsLabel(problems.length) : HEALTHY, problems };
+}
+
+function problemsLabel(count) {
+  return `${count} problem${count === 1 ? "" : "s"}`;
+}
+
+function queueWithNoExtractionBehindIt(extraction, at, staleAfterMs) {
+  const { waiting } = extraction;
+  if (!waiting) return null;
+
+  const lastAt = extraction.processed.lastAt;
+  const queue = `${sessionCount(waiting)} waiting`;
+  if (!Number.isFinite(lastAt)) return `nothing extracted yet with ${queue}`;
+  if (at - lastAt < staleAfterMs) return null;
+  return `no extraction in ${elapsedToTheHour(at - lastAt)} with ${queue}`;
+}
+
+function crashThatNeverRecovered(extraction, at) {
+  const { lease } = extraction;
+  if (!hasExpired(lease, at)) return null;
+  if (extractedSince(extraction, lease.expiresAt)) return null;
+  const since = elapsedToTheHour(at - lease.expiresAt);
+  return `lease held by ${lease.holder} expired ${since} ago with no extraction since`;
+}
+
+function hasExpired(lease, at) {
+  return Boolean(lease) && Number.isFinite(lease.expiresAt) && lease.expiresAt <= at;
+}
+
+function extractedSince(extraction, ms) {
+  return Number.isFinite(extraction.processed.lastAt) && extraction.processed.lastAt >= ms;
 }
 
 function hasRecordedNothing(extraction) {
@@ -130,8 +185,12 @@ function momentWithAge(ms, at, timeZone) {
 
 function leaseValue(lease, at) {
   if (!lease) return "free";
-  const age = Number.isFinite(lease.startedAt) ? ` (${elapsed(at - lease.startedAt)})` : "";
-  return `held by ${lease.holder}${age}`;
+  const notes = [
+    Number.isFinite(lease.startedAt) ? elapsed(at - lease.startedAt) : null,
+    hasExpired(lease, at) ? `expired ${elapsed(at - lease.expiresAt)} ago` : null,
+  ].filter(Boolean);
+  const detail = notes.length ? ` (${notes.join(", ")})` : "";
+  return `held by ${lease.holder}${detail}`;
 }
 
 function failuresValue({ sessions, attempts }) {
@@ -146,17 +205,17 @@ function sessionCount(count) {
   return `${thousands(count)} session${count === 1 ? "" : "s"}`;
 }
 
-const A_SECOND = 1_000;
-const A_MINUTE = 60 * A_SECOND;
-const AN_HOUR = 60 * A_MINUTE;
-const A_DAY = 24 * AN_HOUR;
-
 function elapsed(ms) {
   const since = Math.max(0, ms);
   if (since < A_MINUTE) return `${Math.floor(since / A_SECOND)}s`;
   if (since < AN_HOUR) return `${Math.floor(since / A_MINUTE)}m`;
   if (since < A_DAY) return `${Math.floor(since / AN_HOUR)}h`;
   return `${Math.floor(since / A_DAY)}d`;
+}
+
+function elapsedToTheHour(ms) {
+  const since = Math.max(0, ms);
+  return since < AN_HOUR ? elapsed(since) : `${Math.floor(since / AN_HOUR)}h`;
 }
 
 const thousands = (count) => count.toLocaleString("en-US");
