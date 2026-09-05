@@ -838,8 +838,14 @@ test("reading the status leaves the search log exactly as the read path wrote it
   assert.equal(readFileSync(config.searchLogPath, "utf-8"), before);
 });
 
+// This one dates its searches from the real clock, unlike its summarize* neighbours above.
+// runCli spawns the command in its own process, so there is no seam to inject a clock
+// through: the CLI reads Date.now(). A fixed date passes on the day it is written and fails
+// once real time leaves the window behind — this test pinned 2026-08-27 and started failing
+// on 2026-09-03, reporting 0 in the 7d column. Yesterday is inside every window the report
+// prints, so the assertions below hold on any day they are run.
 test("toc-status prints the search block as a table with a header row per window", () => {
-  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const now = Date.now() - A_DAY;
   const config = tempCorpus();
   appendSearches(config, [
     searched({ at: now, source: "automatic" }),
