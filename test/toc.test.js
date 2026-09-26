@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -86,6 +86,25 @@ test("a fact reworded past the similarity threshold is not appended twice", () =
     "the build system resolves dependencies from a version set",
     "something else entirely about pipelines",
   ]);
+});
+
+// The extractor is a detached process that can be killed mid-write, and the corpus has no
+// backup (ADR 0001). A file replaced by a rename is whole before it or whole after it, where
+// one rewritten in place can be left truncated, and it gets a new inode where that one keeps
+// its own.
+test("an append replaces the topic file and the TOC whole, and leaves no temp file behind", () => {
+  const { config, store } = storeWith({ brazil: { context: ["uses version sets"] } });
+  const topicInode = statSync(topicPath(config, "brazil")).ino;
+  const tocInode = statSync(config.tocPath).ino;
+
+  store.appendToTopic("brazil", "Context", "pins the major version", A_SESSION, HAPPENED_ON);
+
+  assert.notEqual(statSync(topicPath(config, "brazil")).ino, topicInode);
+  assert.notEqual(statSync(config.tocPath).ino, tocInode);
+  assert.deepEqual(readdirSync(config.topicsDir), ["brazil.md"]);
+  assert.deepEqual(readdirSync(config.corpusDir).sort(), ["toc.json", "topics"]);
+  assert.deepEqual(textsIn(config, "brazil"), ["uses version sets", "pins the major version"]);
+  assert.equal(store.loadToc().topics.brazil.entries, 2);
 });
 
 const batchCap = (rows, minutes = 25) =>

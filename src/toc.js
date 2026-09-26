@@ -1,5 +1,7 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "fs";
+import { readFileSync, mkdirSync, existsSync, renameSync } from "fs";
 import { join } from "path";
+
+import { writeFileAtomically } from "./write-atomically.js";
 
 export function createTopicStore(config) {
   const topicPath = (topicId) => join(config.topicsDir, `${topicId}.md`);
@@ -15,7 +17,7 @@ export function createTopicStore(config) {
 
   function saveToc(toc) {
     mkdirSync(config.corpusDir, { recursive: true });
-    writeFileSync(config.tocPath, JSON.stringify(toc, null, 2) + "\n");
+    writeFileAtomically(config.tocPath, JSON.stringify(toc, null, 2) + "\n");
   }
 
   function upsertTopic(id, { keywords = [], summary = "" } = {}) {
@@ -46,7 +48,7 @@ export function createTopicStore(config) {
     if (existsSync(topicFile)) return;
 
     const headings = SECTIONS.map((section) => `## ${section}\n`).join("\n");
-    writeFileSync(topicFile, `# ${id.replace(/_/g, " ")}\n\n${headings}`);
+    writeFileAtomically(topicFile, `# ${id.replace(/_/g, " ")}\n\n${headings}`);
   }
 
   // --- Topic file operations ---
@@ -67,11 +69,11 @@ export function createTopicStore(config) {
     const block = sectionBlock(content, section);
 
     if (!block) {
-      writeFileSync(topicFile, `${content}\n## ${section}\n\n${line}`);
+      writeFileAtomically(topicFile, `${content}\n## ${section}\n\n${line}`);
     } else if (isDuplicateFact(block.text, factText)) {
       return;
     } else {
-      writeFileSync(topicFile, content.slice(0, block.end) + line + content.slice(block.end));
+      writeFileAtomically(topicFile, content.slice(0, block.end) + line + content.slice(block.end));
     }
 
     recountTocEntry(topicId);
