@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 
-import { createExtractor } from "../src/extract.js";
+import { createExtractor, SAME_SESSION_FACTS_IN_A_PROMPT } from "../src/extract.js";
 import { createSearch } from "../src/search.js";
 import { createStateStore } from "../src/state.js";
 import {
@@ -260,6 +260,83 @@ test("the known-facts block is capped at twenty facts", () => {
   assert.equal(result.knownFacts, 20);
   const known = model.calls[0].prompt.match(/^- \(alcs_broadcast_variants\//gm) ?? [];
   assert.equal(known.length, 20);
+});
+
+const EARLIER_IN_THIS_SESSION = `session:${SESSION.slice(0, 8)}, 2026-08-20`;
+
+function knownFactsIn(prompt) {
+  const block = prompt.split("do not repeat these:\n")[1]?.split("\nCONVERSATION:")[0] ?? "";
+  return block.split("\n").filter((line) => line.startsWith("- ("));
+}
+
+function knownFactsPromptedFor(config) {
+  const model = stubModel([MODEL_OUTPUT]);
+  const extractor = extractorFor(config, model);
+  extractor.extractSession(sessionIn(config));
+  extractor.close();
+  return knownFactsIn(model.calls[0].prompt);
+}
+
+test("a session's own earlier facts lead the known facts, ahead of the ranked ones", () => {
+  const config = tempCorpus();
+  writeTopic(config, "alcs_broadcast_variants", {
+    Context: [
+      "- Broadcast variants are stored in dynamodb [session:aaaaaaaa, 2026-05-12]",
+      `- Broadcast variants are keyed by show id [${EARLIER_IN_THIS_SESSION}]`,
+    ],
+  });
+  writeTopic(config, "ingest_lambda", {
+    Context: [`- The ingest lambda retries three times [${EARLIER_IN_THIS_SESSION}]`],
+  });
+  writeTranscript(config, SESSION, CONVERSATION);
+  appendSessions(config, [sessionIn(config)]);
+
+  const known = knownFactsPromptedFor(config);
+
+  assert.deepEqual(
+    known.slice(0, 2).sort(),
+    [
+      "- (alcs_broadcast_variants/Context) Broadcast variants are keyed by show id",
+      "- (ingest_lambda/Context) The ingest lambda retries three times",
+    ],
+    "an earlier slice's facts come first, even one filed under a topic that is not a candidate"
+  );
+  assert.deepEqual(
+    known.slice(2),
+    ["- (alcs_broadcast_variants/Context) Broadcast variants are stored in dynamodb"],
+    "a ranked fact the session's own facts already listed is not listed twice"
+  );
+});
+
+test("the same-session facts in a prompt are capped", () => {
+  const config = corpusWithOneTopic();
+  writeTopic(config, "earlier_in_this_session", {
+    Context: Array.from(
+      { length: SAME_SESSION_FACTS_IN_A_PROMPT + 5 },
+      (_, i) => `- Sourdough note ${i} [${EARLIER_IN_THIS_SESSION}]`
+    ),
+  });
+
+  const known = knownFactsPromptedFor(config);
+
+  const own = known.filter((line) => line.startsWith("- (earlier_in_this_session/"));
+  assert.equal(own.length, SAME_SESSION_FACTS_IN_A_PROMPT);
+  assert.ok(
+    known.some((line) => line.startsWith("- (alcs_broadcast_variants/")),
+    "the ranked facts still follow a session that hit the cap"
+  );
+});
+
+test("a session with no facts yet is prompted with the ranked facts alone, as before", () => {
+  const config = corpusWithOneTopic();
+  writeTopic(config, "another_sessions_notes", {
+    Context: ["- Sourdough needs a longer proof [session:bbbbbbbb, 2026-05-12]"],
+  });
+
+  assert.deepEqual(knownFactsPromptedFor(config).sort(), [
+    "- (alcs_broadcast_variants/Context) Broadcast variants are stored in dynamodb",
+    "- (alcs_broadcast_variants/Decisions) Will use dynamodb for the alcs pipeline",
+  ]);
 });
 
 test("prompt size does not grow as topic count grows", () => {

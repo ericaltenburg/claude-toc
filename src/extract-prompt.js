@@ -51,8 +51,10 @@ export function buildExtractPrompt({ candidates = [], knownFacts = [] } = {}) {
       `Only invent a new topic.id if none of them fits.\n`;
   }
 
+  // Not "about those topics": the facts this session's earlier slices produced lead the list,
+  // wherever they were filed.
   if (knownFacts.length) {
-    prompt += `\nAlready known about those topics — do not repeat these:\n`;
+    prompt += `\nAlready in memory, so do not repeat these:\n`;
     for (const fact of knownFacts) {
       prompt += `- (${fact.topic}/${fact.section}) ${fact.text}\n`;
     }
