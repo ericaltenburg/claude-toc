@@ -72,15 +72,17 @@ export function createExtractor(
       return outcome("nothing-to-extract", { sessionId, offset: slice.offset });
     }
 
-    const { candidates, knownFacts } = promptContextFromAFreshIndex(slice.text, project, sessionId);
-    const prompt = buildExtractPrompt({ candidates, knownFacts });
+    const context = promptContextFromAFreshIndex(slice.text, project, sessionId);
+    const { candidates } = context;
     const chunks = chunkTurns(turns, maxChunkChars);
 
-    let results;
+    const results = [];
     try {
-      results = chunks.map((chunk) =>
-        withSupersededFactsNamed(extractChunk(prompt, chunk, sessionId), knownFacts)
-      );
+      for (const chunk of chunks) {
+        const knownFacts = knownFactsFor(context, results);
+        const prompt = buildExtractPrompt({ candidates, knownFacts });
+        results.push(withSupersededFactsNamed(extractChunk(prompt, chunk, sessionId), knownFacts));
+      }
     } catch (error) {
       const failure = state.recordFailure(sessionId, error.message);
       return outcome(failure.quarantined ? "quarantined" : "failed", {
@@ -125,7 +127,7 @@ export function createExtractor(
       topic: written[0].topic.id,
       topics: written.map((merged) => merged.topic.id),
       candidates,
-      knownFacts: knownFacts.length,
+      knownFacts: context.ownFacts.length + context.rankedFacts.length,
       chunks: chunks.length,
       ...countsBySection(written),
       superseded,
@@ -150,24 +152,43 @@ export function createExtractor(
   function promptContextFromAFreshIndex(text, project, sessionId) {
     index.refresh();
 
-    const ownFacts = index.factsFromSession(sessionId, SAME_SESSION_FACTS_IN_A_PROMPT);
+    const own = index.factsFromSession(sessionId, SAME_SESSION_FACTS_IN_A_PROMPT);
+    const ownFacts = own.map(asKnownFact);
     const match = salientTermsQuery(text);
-    if (!match) return { candidates: [], knownFacts: ownFacts.map(asKnownFact) };
+    if (!match) return { candidates: [], ownFacts, rankedFacts: [] };
 
     const ranked = index.factsRankedAgainst(match, FACTS_SCANNED_FOR_CANDIDATES);
     const candidates = rankedCandidates(ranked, project);
     const chosen = new Set(candidates.map((candidate) => candidate.topic));
-    const listed = new Set(ownFacts.map((row) => row.id));
+    const listed = new Set(own.map((row) => row.id));
     // A superseded fact still says what its topic is about, so it counts toward choosing the
     // candidates, but it is not offered as known: a value that changed back is news again.
-    const knownFacts = [
-      ...ownFacts,
-      ...ranked
-        .filter((row) => chosen.has(row.topic) && !listed.has(row.id) && !row.superseded_date)
-        .slice(0, factLimit),
-    ].map(asKnownFact);
+    const rankedFacts = ranked
+      .filter((row) => chosen.has(row.topic) && !listed.has(row.id) && !row.superseded_date)
+      .slice(0, factLimit)
+      .map(asKnownFact);
 
-    return { candidates, knownFacts };
+    return { candidates, ownFacts, rankedFacts };
+  }
+
+  // What the earlier chunks of this run returned is the session's newest, not yet written, so
+  // it leads the session's own facts and shares their cap, newest kept. Each is listed under the
+  // topic its chunk will be written to, which is also where a supersession will look for it.
+  function knownFactsFor({ candidates, ownFacts, rankedFacts }, earlierChunks) {
+    const fromThisRun = earlierChunks
+      .filter((result) => !result.skip)
+      .flatMap((result) => {
+        const topic = resolveTopicId(result.topic.id, candidates);
+        return SECTIONS.flatMap((section) =>
+          result[keyOf(section)].map(({ text }) => ({ topic, section, text }))
+        );
+      })
+      .reverse();
+
+    return [
+      ...[...fromThisRun, ...ownFacts].slice(0, SAME_SESSION_FACTS_IN_A_PROMPT),
+      ...rankedFacts,
+    ];
   }
 
   function rankedCandidates(ranked, project) {

@@ -626,6 +626,104 @@ test("a chunk that named a different topic keeps its facts under that topic", ()
   assert.ok(factsIn(config, "alcs_broadcast_variants").some((l) => l.includes("keyed by show id")));
 });
 
+// --- Chunks of one slice ---
+
+const INGEST_LAMBDA = { id: "ingest_lambda", keywords: ["ingest"], summary: "the ingest lambda" };
+
+function corpusWithASliceOfSeveralChunks() {
+  const config = corpusWithOneTopic();
+  appendTranscript(config, SESSION, [
+    { role: "user", text: `then we moved on to the ingest lambda: ${"x".repeat(400)}` },
+    { role: "assistant", text: `the ingest lambda retries three times: ${"y".repeat(400)}` },
+  ]);
+  return config;
+}
+
+// Every chunk of a slice used to get the same prompt, so the second never saw what the first had
+// just returned and wrote it again, reworded.
+test("a later chunk's prompt lists the facts the earlier chunks of the same run returned", () => {
+  const config = corpusWithASliceOfSeveralChunks();
+  const model = stubModel((_call, index) =>
+    index === 0 ? MODEL_OUTPUT : { topic: INGEST_LAMBDA, context: ["The ingest lambda retries three times"] }
+  );
+  const extractor = extractorFor(config, model, { maxChunkChars: 400 });
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.ok(result.chunks > 2, `expected at least three chunks, got ${result.chunks}`);
+  const fromTheFirstChunk = [
+    "(alcs_broadcast_variants/Context) Broadcast variants are keyed by show id",
+    "(alcs_broadcast_variants/Decisions) Will keep DynamoDB for broadcast variants",
+  ];
+  const listed = model.calls.map((call) => knownFactsIn(call.prompt));
+  for (const line of fromTheFirstChunk) {
+    assert.equal(listed[0].includes(line), false, line);
+    assert.ok(listed[1].includes(line), line);
+  }
+  assert.ok(listed[2].includes("(ingest_lambda/Context) The ingest lambda retries three times"));
+});
+
+test("a later chunk can supersede what an earlier chunk of the same run returned", () => {
+  const config = corpusWithASliceOfSeveralChunks();
+  const replaced = "Broadcast variants are keyed by show id";
+  const model = stubModel((call, index) =>
+    index === 0
+      ? MODEL_OUTPUT
+      : {
+          topic: INGEST_LAMBDA,
+          context: [
+            "The ingest lambda retries three times",
+            "The ingest lambda reads variants from a queue",
+            {
+              text: "Broadcast variants are keyed by show id and region",
+              supersedes: [numberOf(call.prompt, replaced)],
+            },
+          ],
+        }
+  );
+  const extractor = extractorFor(config, model, { maxChunkChars: 400, timeZone: "UTC" });
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.equal(result.superseded, 1, "written after its own topic, and still found");
+  const old = parseTopic(readFileSync(topicPath(config, "alcs_broadcast_variants"), "utf-8")).find(
+    (fact) => fact.text === replaced
+  );
+  assert.deepEqual(old.superseded, { session: SESSION.slice(0, 8), date: WHEN_THIS_SESSION_HAPPENED });
+});
+
+test("what earlier chunks returned shares the cap on the session's own facts", () => {
+  const config = corpusWithASliceOfSeveralChunks();
+  writeTopic(config, "earlier_in_this_session", {
+    Context: Array.from(
+      { length: SAME_SESSION_FACTS_IN_A_PROMPT + 5 },
+      (_, i) => `- Sourdough note ${i} [${EARLIER_IN_THIS_SESSION}]`
+    ),
+  });
+  const model = stubModel((_call, index) =>
+    index === 0 ? MODEL_OUTPUT : { topic: INGEST_LAMBDA, context: [] }
+  );
+  const extractor = extractorFor(config, model, { maxChunkChars: 400 });
+
+  extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  const second = knownFactsIn(model.calls[1].prompt);
+  const ownOrThisRun = second.filter(
+    (line) =>
+      line.startsWith("(earlier_in_this_session/") ||
+      line.endsWith("keyed by show id") ||
+      line.endsWith("Will keep DynamoDB for broadcast variants")
+  );
+  assert.equal(ownOrThisRun.length, SAME_SESSION_FACTS_IN_A_PROMPT);
+  assert.deepEqual(second.slice(0, 2).sort(), [
+    "(alcs_broadcast_variants/Context) Broadcast variants are keyed by show id",
+    "(alcs_broadcast_variants/Decisions) Will keep DynamoDB for broadcast variants",
+  ]);
+});
+
 test("a session failing three times is quarantined and surfaced", () => {
   const config = corpusWithOneTopic();
   const model = stubModel(() => new Error("model unavailable"));
