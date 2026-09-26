@@ -1,24 +1,43 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { homedir } from "node:os";
 
 import { createConfig } from "../src/config.js";
 
 const REPO_ROOT = join(import.meta.dirname, "..");
 
-test("derives every corpus path from the corpus directory", () => {
-  const config = createConfig({ corpusDir: "/tmp/corpus" }, {});
+test("groups every path under the root by how replaceable the file is", () => {
+  const config = createConfig({ corpusDir: "/tmp/root" }, {});
 
-  assert.equal(config.corpusDir, "/tmp/corpus");
-  assert.equal(config.topicsDir, join("/tmp/corpus", "topics"));
-  assert.equal(config.tocPath, join("/tmp/corpus", "toc.json"));
-  assert.equal(config.sessionIndexPath, join("/tmp/corpus", "sessions.jsonl"));
-  assert.equal(config.statePath, join("/tmp/corpus", "state.json"));
-  assert.equal(config.extractionLockPath, join("/tmp/corpus", "extraction.lock"));
-  assert.equal(config.indexPath, join("/tmp/corpus", "index.db"));
-  assert.equal(config.searchLogPath, join("/tmp/corpus", "search.log"));
-  assert.equal(config.smokeQueriesPath, join("/tmp/corpus", "smoke-queries.json"));
+  assert.equal(config.corpusDir, "/tmp/root");
+
+  assert.equal(config.topicsDir, join("/tmp/root", "corpus", "topics"));
+  assert.equal(config.tocPath, join("/tmp/root", "corpus", "toc.json"));
+
+  assert.equal(config.statePath, join("/tmp/root", "ledger", "state.json"));
+  assert.equal(config.sessionIndexPath, join("/tmp/root", "ledger", "sessions.jsonl"));
+  assert.equal(config.spendLogPath, join("/tmp/root", "ledger", "spend.jsonl"));
+  assert.equal(config.searchLogPath, join("/tmp/root", "ledger", "search.log"));
+
+  assert.equal(config.smokeQueriesPath, join("/tmp/root", "config", "smoke-queries.json"));
+  assert.equal(config.modelRatesPath, join("/tmp/root", "config", "model-rates.json"));
+
+  assert.equal(config.indexPath, join("/tmp/root", "cache", "index.db"));
+  assert.equal(config.extractorDir, join("/tmp/root", "cache", "extractor"));
+  assert.equal(config.extractionLockPath, join("/tmp/root", "cache", "extraction.lock"));
+});
+
+test("a topic's file in the TOC resolves from the directory the TOC sits in", () => {
+  const config = createConfig({ corpusDir: "/tmp/root" }, {});
+
+  assert.equal(join(dirname(config.tocPath), config.topicsDirName), config.topicsDir);
+});
+
+test("the extractor's old transcripts are still looked for where it used to run", () => {
+  const config = createConfig({ corpusDir: "/tmp/root", transcriptsDir: "/tmp/projects" }, {});
+
+  assert.equal(config.extractorTranscriptsDir, join("/tmp/projects", "-tmp-root-extractor"));
 });
 
 test("reads the corpus, transcripts and prompt log from the environment", () => {

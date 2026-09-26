@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { createConfig } from "../src/config.js";
 import { createTopicStore } from "../src/corpus/topics.js";
@@ -102,7 +102,7 @@ test("an append replaces the topic file and the TOC whole, and leaves no temp fi
   assert.notEqual(statSync(topicPath(config, "brazil")).ino, topicInode);
   assert.notEqual(statSync(config.tocPath).ino, tocInode);
   assert.deepEqual(readdirSync(config.topicsDir), ["brazil.md"]);
-  assert.deepEqual(readdirSync(config.corpusDir).sort(), ["toc.json", "topics"]);
+  assert.deepEqual(readdirSync(dirname(config.tocPath)).sort(), ["toc.json", "topics"]);
   assert.deepEqual(textsIn(config, "brazil"), ["uses version sets", "pins the major version"]);
   assert.equal(store.loadToc().topics.brazil.entries, 2);
 });

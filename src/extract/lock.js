@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import { CALL_TIMEOUT_MS } from "./bedrock.js";
 
@@ -25,7 +26,7 @@ export function createExtractionLock(config) {
   }
 
   function created(holder) {
-    mkdirSync(config.corpusDir, { recursive: true });
+    mkdirSync(dirname(path), { recursive: true });
     const lock = { holder, startedAt: new Date().toISOString(), pid: process.pid };
     try {
       writeFileSync(path, JSON.stringify(lock), { flag: "wx" });
