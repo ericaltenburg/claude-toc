@@ -1,9 +1,9 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { openIndex } from "../index/open.js";
 import { ftsQuery, termsQuery } from "../index/terms.js";
-import { parseJsonLine } from "../json-lines.js";
+import { logSearchBestEffort } from "./log.js";
 
 export const FACT_LIMIT = 20;
 export const PROMPT_LIMIT = 10;
@@ -234,38 +234,4 @@ function assertReadOnly(statement) {
 
 function isFts5SyntaxError(error) {
   return /fts5/i.test(String(error?.message));
-}
-
-// --- The search log ---
-
-function logSearchBestEffort(
-  config,
-  now,
-  { query, mode, rows, source, project, allProjects, fellBackFrom }
-) {
-  try {
-    mkdirSync(config.corpusDir, { recursive: true });
-    appendFileSync(
-      config.searchLogPath,
-      `${JSON.stringify({
-        ts: now().toISOString(),
-        query: String(query ?? ""),
-        rows,
-        mode,
-        source,
-        ...(project ? { project } : {}),
-        ...(allProjects ? { allProjects: true } : {}),
-        ...(fellBackFrom ? { fellBackFrom } : {}),
-      })}\n`
-    );
-  } catch {}
-}
-
-export function searchLogEntries(config) {
-  if (!existsSync(config.searchLogPath)) return [];
-  return readFileSync(config.searchLogPath, "utf-8")
-    .split("\n")
-    .filter((line) => line.trim())
-    .map(parseJsonLine)
-    .filter(Boolean);
 }
