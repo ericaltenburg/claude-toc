@@ -1,9 +1,9 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { parseJsonLine } from "./json-lines.js";
-import { openIndex } from "./index/open.js";
-import { ftsQuery, termsQuery } from "./index/terms.js";
+import { openIndex } from "../index/open.js";
+import { ftsQuery, termsQuery } from "../index/terms.js";
+import { parseJsonLine } from "../json-lines.js";
 
 export const FACT_LIMIT = 20;
 export const PROMPT_LIMIT = 10;

@@ -10,7 +10,7 @@ import {
   SEARCH_ROW_LABELS,
 } from "../src/status.js";
 import { renderStatus } from "../src/cli/status.js";
-import { SOURCES } from "../src/search.js";
+import { SOURCES } from "../src/search/search.js";
 import { createSpendLog } from "../src/extract/spend.js";
 import { createExtractionLock, EXTRACTION_LOCK_IS_STALE_AFTER_MS } from "../src/extract/lock.js";
 import { SESSION_IS_IDLE_AFTER_MS } from "../src/extract/sweep.js";

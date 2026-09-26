@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ftsQuery } from "../src/index/terms.js";
-import { createSearch } from "../src/search.js";
+import { createSearch } from "../src/search/search.js";
 import { parseArgs } from "../src/cli/search.js";
 import { createStateStore } from "../src/sessions/progress.js";
 import {
