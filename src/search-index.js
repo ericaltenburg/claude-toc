@@ -13,10 +13,12 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 
-import { parsePromptRecord, parseTopic } from "./parse.js";
+import { createTopicStore } from "./corpus/topics.js";
+import { parseJsonLine } from "./json-lines.js";
+import { localDateParts } from "./local-time.js";
+import { parseTopic } from "./parse.js";
 import { createStateStore } from "./sessions/progress.js";
 import { parseSessionRecord } from "./sessions/registry.js";
-import { createTopicStore } from "./corpus/topics.js";
 
 export const SCHEMA_VERSION = 1;
 
@@ -298,6 +300,31 @@ function refreshPrompts(db, config, timeZone) {
   });
 
   return { promptsIndexed: count };
+}
+
+// The prompt log is Claude Code's history.jsonl, and the index is the only thing that reads
+// it, so its record shape is known here and nowhere else.
+export function parsePromptRecord(line, timeZone) {
+  const record = parseJsonLine(line);
+  if (!record) return null;
+
+  const text = typeof record.display === "string" ? record.display.trim() : "";
+  if (!text) return null;
+
+  const ts = typeof record.timestamp === "number" ? record.timestamp : NaN;
+  if (!Number.isFinite(ts)) return null;
+
+  const { date, time } = localDateParts(ts, timeZone);
+
+  return {
+    ts,
+    localDate: date,
+    localTime: time,
+    session: typeof record.sessionId === "string" ? record.sessionId : null,
+    project: typeof record.project === "string" ? record.project : null,
+    text,
+    isCommand: text.startsWith("/") ? 1 : 0,
+  };
 }
 
 // --- Sessions ---

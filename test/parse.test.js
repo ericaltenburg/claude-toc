@@ -1,10 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { localDateParts } from "../src/local-time.js";
-import { parseFactLine, parsePromptRecord, parseTopic } from "../src/parse.js";
-
-const NY = "America/New_York";
+import { parseFactLine, parseTopic } from "../src/parse.js";
 
 test("parses a fact carrying a session and a date", () => {
   const fact = parseFactLine("- Project uses Brazil build system [session:316972f2, 2026-05-12]");
@@ -115,48 +112,4 @@ test("keeps facts from a section other than Context or Decisions", () => {
   assert.deepEqual(parseTopic(markdown).map((f) => [f.section, f.text]), [
     ["Notes", "kept anyway"],
   ]);
-});
-
-test("parses a prompt log record", () => {
-  const record = parsePromptRecord(
-    JSON.stringify({
-      display: "what did we decide about broadcast variants?",
-      timestamp: 1774279096774,
-      project: "/some/project",
-      sessionId: "4cc461d6-2d88-4426-966c-ba2081ca75bb",
-    }),
-    NY
-  );
-
-  assert.deepEqual(record, {
-    ts: 1774279096774,
-    localDate: localDateParts(1774279096774, NY).date,
-    localTime: localDateParts(1774279096774, NY).time,
-    session: "4cc461d6-2d88-4426-966c-ba2081ca75bb",
-    project: "/some/project",
-    text: "what did we decide about broadcast variants?",
-    isCommand: 0,
-  });
-});
-
-test("flags a prompt that is a slash command", () => {
-  const record = parsePromptRecord(
-    JSON.stringify({ display: "/toc-search variants", timestamp: 1774279104053 })
-  );
-
-  assert.equal(record.isCommand, 1);
-  assert.equal(record.session, null);
-  assert.equal(record.project, null);
-});
-
-test("skips a malformed prompt log line rather than throwing", () => {
-  assert.equal(parsePromptRecord("{not json"), null);
-  assert.equal(parsePromptRecord(""), null);
-  assert.equal(parsePromptRecord("null"), null);
-  assert.equal(parsePromptRecord(JSON.stringify({ display: "no timestamp" })), null);
-  assert.equal(parsePromptRecord(JSON.stringify({ timestamp: 1774279104053 })), null);
-  assert.equal(
-    parsePromptRecord(JSON.stringify({ display: "  ", timestamp: 1774279104053 })),
-    null
-  );
 });

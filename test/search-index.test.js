@@ -4,7 +4,8 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { appendFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 
-import { openIndex, SCHEMA_VERSION } from "../src/search-index.js";
+import { localDateParts } from "../src/local-time.js";
+import { openIndex, parsePromptRecord, SCHEMA_VERSION } from "../src/search-index.js";
 import { createStateStore } from "../src/sessions/progress.js";
 import {
   AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
@@ -397,6 +398,50 @@ test("re-reads the whole prompt log when it has been emptied and then refilled",
       ["one prompt", "two prompt", "three prompt"]
     );
   });
+});
+
+test("parses a prompt log record", () => {
+  const record = parsePromptRecord(
+    JSON.stringify({
+      display: "what did we decide about broadcast variants?",
+      timestamp: 1774279096774,
+      project: "/some/project",
+      sessionId: "4cc461d6-2d88-4426-966c-ba2081ca75bb",
+    }),
+    NY
+  );
+
+  assert.deepEqual(record, {
+    ts: 1774279096774,
+    localDate: localDateParts(1774279096774, NY).date,
+    localTime: localDateParts(1774279096774, NY).time,
+    session: "4cc461d6-2d88-4426-966c-ba2081ca75bb",
+    project: "/some/project",
+    text: "what did we decide about broadcast variants?",
+    isCommand: 0,
+  });
+});
+
+test("flags a prompt that is a slash command", () => {
+  const record = parsePromptRecord(
+    JSON.stringify({ display: "/toc-search variants", timestamp: 1774279104053 })
+  );
+
+  assert.equal(record.isCommand, 1);
+  assert.equal(record.session, null);
+  assert.equal(record.project, null);
+});
+
+test("skips a malformed prompt log line rather than throwing", () => {
+  assert.equal(parsePromptRecord("{not json"), null);
+  assert.equal(parsePromptRecord(""), null);
+  assert.equal(parsePromptRecord("null"), null);
+  assert.equal(parsePromptRecord(JSON.stringify({ display: "no timestamp" })), null);
+  assert.equal(parsePromptRecord(JSON.stringify({ timestamp: 1774279104053 })), null);
+  assert.equal(
+    parsePromptRecord(JSON.stringify({ display: "  ", timestamp: 1774279104053 })),
+    null
+  );
 });
 
 test("records when a session was extracted and which topic it fed", () => {

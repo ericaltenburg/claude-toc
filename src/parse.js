@@ -1,7 +1,4 @@
-import { parseJsonLine } from "./json-lines.js";
-import { localDateParts } from "./local-time.js";
-
-const FACT_WITH_SESSION =/^(.*?)\s*\[session:([^\s,\]]+),\s*(\d{4}-\d{2}-\d{2})\]$/;
+const FACT_WITH_SESSION = /^(.*?)\s*\[session:([^\s,\]]+),\s*(\d{4}-\d{2}-\d{2})\]$/;
 const FACT_WITH_DATE = /^(.*?)\s*\[(\d{4}-\d{2}-\d{2})\]$/;
 
 export function parseFactLine(line) {
@@ -43,27 +40,4 @@ export function parseTopic(markdown) {
   }
 
   return facts;
-}
-
-export function parsePromptRecord(line, timeZone) {
-  const record = parseJsonLine(line);
-  if (!record) return null;
-
-  const text = typeof record.display === "string" ? record.display.trim() : "";
-  if (!text) return null;
-
-  const ts = typeof record.timestamp === "number" ? record.timestamp : NaN;
-  if (!Number.isFinite(ts)) return null;
-
-  const { date, time } = localDateParts(ts, timeZone);
-
-  return {
-    ts,
-    localDate: date,
-    localTime: time,
-    session: typeof record.sessionId === "string" ? record.sessionId : null,
-    project: typeof record.project === "string" ? record.project : null,
-    text,
-    isCommand: text.startsWith("/") ? 1 : 0,
-  };
 }
