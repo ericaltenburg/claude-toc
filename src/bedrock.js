@@ -6,7 +6,7 @@ import { join } from "node:path";
 export const BEDROCK_MESSAGES_VERSION = "bedrock-2023-05-31";
 export const FACTS_FIT_IN_OUTPUT_TOKENS = 8192;
 
-const CALL_TIMEOUT_MS = 300_000;
+export const CALL_TIMEOUT_MS = 300_000;
 const RESPONSE_LIMIT = 2 * 1024 * 1024;
 
 export function createModelCall(

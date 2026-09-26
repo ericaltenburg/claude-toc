@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 
 import { createConfig } from "../config.js";
-import { createExtractor } from "../extract.js";
+import { bedrockBilledToOurOwnProfile, createExtractor } from "../extract.js";
+import { createExtractionLock } from "../extraction-lock.js";
 import { indexedSessions } from "../session-index.js";
 import { createStateStore, transcriptHasUnreadTurns } from "../state.js";
 import { createSweeper } from "../sweep.js";
@@ -90,7 +92,7 @@ function extractEach(config, sessions, options = {}) {
   }
 }
 
-function retry(config, state, sessions, prefix) {
+function retry(config, state, sessions, prefix, callModel) {
   if (!prefix) {
     console.log("Usage: toc-extract --retry <session-id-prefix>");
     return 2;
@@ -107,11 +109,11 @@ function retry(config, state, sessions, prefix) {
     console.log(`${session.session_id}: ${released ? "quarantine released" : "was not quarantined"}`);
   }
 
-  extractEach(config, chosen, { maxChunkChars: CHARS_PER_RETRIED_MODEL_CALL });
+  extractEach(config, chosen, { callModel, maxChunkChars: CHARS_PER_RETRIED_MODEL_CALL });
   return 0;
 }
 
-function run(argv) {
+function run(argv, callModel) {
   const config = createConfig();
   const arg = argv[0];
 
@@ -128,7 +130,7 @@ function run(argv) {
       console.log("No session is idle enough to sweep.");
       return 0;
     }
-    extractEach(config, swept);
+    extractEach(config, swept, { callModel });
     return 0;
   }
 
@@ -139,7 +141,7 @@ function run(argv) {
   }
 
   if (arg === "--retry") {
-    return retry(config, state, sessions, argv[1]);
+    return retry(config, state, sessions, argv[1], callModel);
   }
 
   if (!arg) {
@@ -157,20 +159,41 @@ function run(argv) {
     return arg === "--all" ? 0 : 1;
   }
 
-  extractEach(config, chosen);
+  extractEach(config, chosen, { callModel });
   return 0;
 }
 
-// A sweep spawns the extractor holding the extraction lease under TOC_LOCK_SESSION, so
-// whoever holds it releases it however the command ends: a crash that skipped this would
-// block extraction until the lease expired.
+// execFileSync blocks the event loop for the whole of a model call, so no timer can renew the
+// lock while one runs. Renewing synchronously before each call is the only moment there is.
+export function renewingBeforeEachCall(lock, holder, callModel) {
+  return (call) => {
+    lock.renew(holder);
+    return callModel(call);
+  };
+}
+
+// Everything but the listing extracts or merges, and two of those at once lose facts: a topic
+// append reads the file and writes it back whole. So every one holds the extraction lease
+// (ADR 0016). A sweep spawns the extractor already holding it under TOC_LOCK_SESSION; anything
+// else takes it here or refuses. Whoever holds it releases it however the command ends: a
+// crash that skipped this would block extraction until the lock went stale.
 export function main(argv) {
+  if (!argv[0]) return run(argv);
+
+  const config = createConfig();
+  const lock = createExtractionLock(config);
+  const spawnedBySweep = process.env.TOC_LOCK_SESSION;
+  const holder = spawnedBySweep || randomUUID();
+  if (!spawnedBySweep && !lock.acquire(holder)) {
+    process.stderr.write(
+      "toc-extract: an extraction is already running; try again in a few minutes\n"
+    );
+    return 1;
+  }
+
   try {
-    return run(argv);
+    return run(argv, renewingBeforeEachCall(lock, holder, bedrockBilledToOurOwnProfile(config)));
   } finally {
-    const lockSession = process.env.TOC_LOCK_SESSION;
-    if (lockSession) {
-      createStateStore(createConfig()).releaseExtraction(lockSession);
-    }
+    lock.release(holder);
   }
 }

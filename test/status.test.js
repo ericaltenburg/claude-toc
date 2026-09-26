@@ -12,7 +12,8 @@ import {
 import { renderStatus } from "../src/cli/status.js";
 import { SOURCES } from "../src/search.js";
 import { createSpendLog } from "../src/spend.js";
-import { createStateStore, EXTRACTION_LEASE_MS } from "../src/state.js";
+import { createExtractionLock, EXTRACTION_LOCK_IS_STALE_AFTER_MS } from "../src/extraction-lock.js";
+import { createStateStore } from "../src/state.js";
 import { SESSION_IS_IDLE_AFTER_MS } from "../src/sweep.js";
 import { EXTRACTION_PROMPT_MARKER } from "../src/extract-prompt.js";
 import {
@@ -433,6 +434,27 @@ test("extraction figures come from the recorded state", () => {
   assert.equal(rowValue(report, "sessions extracted"), "1");
   assert.equal(rowValue(report, "retrying after failure"), "1 session (1 attempt)");
   assert.notEqual(rowValue(report, "last extraction"), "never");
+});
+
+test("an extraction in flight is read from the lock file", () => {
+  const config = tempCorpus();
+  createExtractionLock(config).acquire("sweep-316972f2");
+
+  const report = createStatusReport(config, { timeZone: NEW_YORK }).read();
+
+  assert.match(rowValue(report, "extracting now"), /^yes \(started \d+s ago\)$/);
+});
+
+test("a lock nothing renewed expires from its last renewal, and names its holder", () => {
+  const config = tempCorpus();
+  createExtractionLock(config).acquire("sweep-316972f2");
+  idleFor(config.extractionLockPath, EXTRACTION_LOCK_IS_STALE_AFTER_MS + 15 * A_MINUTE);
+
+  const report = createStatusReport(config, { timeZone: NEW_YORK }).read();
+
+  assert.deepEqual(report.verdict.problems, [
+    "lease held by sweep-316972f2 expired 15m ago with no extraction since",
+  ]);
 });
 
 test("the staleness threshold reaches the verdict through the gathering seam", () => {

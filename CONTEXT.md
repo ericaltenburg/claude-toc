@@ -193,7 +193,7 @@ report: it is the verdict that speaks it, where the corpus's own **self-tests** 
 searches the log recorded.
 
 **The report and the code speak different registers, on purpose.** Every term above keeps
-its mechanism name in the code — `state.quarantined`, `sweptAt`, `acquireExtraction` — and
+its mechanism name in the code — `state.quarantined`, `sweptAt`, `createExtractionLock` — and
 appears on the report as the question it answers, because a lease really is a time-bounded
 exclusive claim and renaming the field to match a display label would make the code worse
 to serve a terminal. The mapping is recorded in each term's entry, and ADR 0015 records

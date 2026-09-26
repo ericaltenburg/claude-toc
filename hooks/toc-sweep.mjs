@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 
 import { createConfig } from "../src/config.js";
+import { createExtractionLock } from "../src/extraction-lock.js";
 import { createStateStore } from "../src/state.js";
 import { createSweeper } from "../src/sweep.js";
 
@@ -30,8 +31,9 @@ function sweep() {
   if (!state.claimSweep()) return;
   if (!createSweeper(config, state).idleSessions().length) return;
 
+  const lock = createExtractionLock(config);
   const lockSession = randomUUID();
-  if (!state.acquireExtraction(lockSession)) return;
+  if (!lock.acquire(lockSession)) return;
 
   mkdirSync(config.extractorDir, { recursive: true });
   const child = spawn(config.extractorCommand, ["--sweep"], {
@@ -44,6 +46,6 @@ function sweep() {
       TOC_LOCK_SESSION: lockSession,
     },
   });
-  child.on("error", () => state.releaseExtraction(lockSession));
+  child.on("error", () => lock.release(lockSession));
   child.unref();
 }

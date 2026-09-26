@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 
+import { createExtractionLock } from "./extraction-lock.js";
 import { dollars, thousands } from "./format.js";
 import { localDateParts } from "./parse.js";
 import { createSearch, searchLogEntries, SOURCES } from "./search.js";
@@ -95,7 +96,7 @@ export function createStatusReport(
       processed: processedReadings(state.processed),
       waiting: createSweeper(config, store, { now }).waitingSessions().length,
       sweptAt: millisecondsOrNull(state.sweptAt),
-      lease: leaseReadings(state.extraction, store.leaseExpiresAt(state.extraction)),
+      lease: leaseReadings(createExtractionLock(config).held()),
       failures: failureReadings(state.failures),
       quarantined: Object.keys(state.quarantined ?? {}).length,
     };
@@ -121,12 +122,12 @@ function failureReadings(failures = {}) {
   };
 }
 
-function leaseReadings(extraction, expiresAt) {
-  if (!extraction?.holder) return null;
+function leaseReadings(lock) {
+  if (!lock?.holder) return null;
   return {
-    holder: extraction.holder,
-    startedAt: millisecondsOrNull(extraction.startedAt),
-    expiresAt,
+    holder: lock.holder,
+    startedAt: millisecondsOrNull(lock.startedAt),
+    expiresAt: lock.expiresAt,
   };
 }
 

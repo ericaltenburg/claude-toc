@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 
 import { ATTEMPTS_BEFORE_QUARANTINE, createStateStore } from "../src/state.js";
 import { tempCorpus } from "./support/corpus.js";
@@ -57,42 +57,22 @@ test("records a skipped session so it is not retried forever", () => {
   assert.equal(state.load().processed["nothing"].topic, null);
 });
 
-test("holds the extraction lease in the same state file", () => {
+test("a state file still carrying the old lease loads, and the lease is dropped", () => {
   const config = freshConfig();
-  const state = createStateStore(config);
-
-  assert.equal(state.acquireExtraction("session-one"), true);
-  assert.equal(state.load().extraction.holder, "session-one");
-
-  assert.equal(createStateStore(config).acquireExtraction("session-two"), false);
-
-  state.releaseExtraction();
-  assert.equal(state.load().extraction, null);
-  assert.equal(createStateStore(config).acquireExtraction("session-two"), true);
-});
-
-test("takes over an extraction lock older than its lease", () => {
-  const config = freshConfig();
-  const state = createStateStore(config);
-
-  const stale = new Date(Date.now() - 10 * 60_000).toISOString();
   writeFileSync(
     config.statePath,
-    JSON.stringify({ version: 1, processed: {}, extraction: { holder: "dead", startedAt: stale } })
+    JSON.stringify({
+      version: 1,
+      processed: { old: { ts: "2026-09-08T20:15:00.000Z", topic: "resume_project" } },
+      extraction: { holder: "21f6985e", startedAt: "2026-09-08T20:15:00.000Z" },
+    })
   );
+  const state = createStateStore(config);
 
-  assert.equal(state.acquireExtraction("session-two"), true);
-  assert.equal(state.load().extraction.holder, "session-two");
-});
+  assert.ok(state.processedRecord("old"));
+  state.recordExtraction("new");
 
-test("releasing a lock another process took does not clobber it", () => {
-  const config = freshConfig();
-  const owner = createStateStore(config);
-  owner.acquireExtraction("mine");
-
-  createStateStore(config).releaseExtraction("someone-else");
-
-  assert.equal(owner.load().extraction.holder, "mine");
+  assert.equal("extraction" in JSON.parse(readFileSync(config.statePath, "utf-8")), false);
 });
 
 test("releasing a quarantine clears the attempts that caused it", () => {
@@ -108,28 +88,6 @@ test("releasing a quarantine clears the attempts that caused it", () => {
   assert.equal(state.isQuarantined("session-one"), false);
   assert.equal(state.load().failures["session-one"], undefined, "the next failure is its first");
   assert.equal(state.releaseQuarantine("session-one"), false, "releasing twice is not a release");
-});
-
-test("adopts an existing processed.json once and never writes it again", () => {
-  const config = freshConfig();
-  const legacy = config.legacyProcessedPath;
-  writeFileSync(
-    legacy,
-    JSON.stringify({ old: { ts: "2026-05-12T00:00:00.000Z", topic: "resume_project" } })
-  );
-
-  const state = createStateStore(config);
-  assert.ok(state.processedRecord("old"));
-
-  state.recordExtraction("new");
-
-  assert.ok(existsSync(config.statePath));
-  assert.deepEqual(
-    Object.keys(JSON.parse(readFileSync(legacy, "utf-8"))),
-    ["old"],
-    "the legacy file must be left untouched, not extended"
-  );
-  assert.deepEqual(Object.keys(state.load().processed).sort(), ["new", "old"]);
 });
 
 test("survives a corrupt state file rather than throwing", () => {
