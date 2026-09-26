@@ -51,6 +51,14 @@ create table sessions (
   extraction_offset integer
 );
 
+-- The identifiers a fact mentions (entities.js, ADR 0020). A value compares without regard to
+-- case, and the rows go when their fact does.
+create table entities (
+  fact_id integer not null references facts(id) on delete cascade,
+  kind text not null,
+  value text not null collate nocase
+);
+
 create virtual table facts_fts using fts5(
   text, content='facts', content_rowid='id', tokenize='porter unicode61'
 );
@@ -77,6 +85,8 @@ create index facts_session on facts(session);
 create index prompts_local_date on prompts(local_date);
 create index prompts_session on prompts(session);
 create index prompts_project on prompts(project);
+create index entities_fact on entities(fact_id);
+create index entities_value on entities(value);
 `;
 
 export function openIndex(config, { timeZone } = {}) {
