@@ -5,7 +5,8 @@ import { once } from "node:events";
 import { appendFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 
 import { localDateParts } from "../src/local-time.js";
-import { openIndex, parsePromptRecord, SCHEMA_VERSION } from "../src/index/open.js";
+import { openIndex, SCHEMA_VERSION } from "../src/index/open.js";
+import { parsePromptRecord } from "../src/index/refresh.js";
 import { createStateStore } from "../src/sessions/progress.js";
 import {
   AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
