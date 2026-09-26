@@ -249,13 +249,32 @@ function withoutAttribution(fact) {
   return fact.replace(/ \[session:.*\]$/, "").replace(/ \[\d{4}-\d{2}-\d{2}\]$/, "");
 }
 
+// A fact stating a number the existing one lacks is an update, not a rewording. Changing
+// 264,000 to 400,000 leaves the word overlap near 0.9, so without this the corpus would keep
+// the stale value and silently drop the current one.
 function isDuplicateFact(sectionText, entry) {
-  if (sectionText.includes(entry.slice(0, 60))) return true;
   const newWords = normalize(entry);
+  const newNumbers = [...numbersIn(entry)];
   for (const fact of factLines(sectionText)) {
-    if (jaccardSimilarity(newWords, normalize(withoutAttribution(fact))) >= 0.8) return true;
+    const said = withoutAttribution(fact);
+    const saidNumbers = numbersIn(said);
+    if (newNumbers.some((number) => !saidNumbers.has(number))) continue;
+    if (said.includes(entry.slice(0, 60))) return true;
+    if (jaccardSimilarity(newWords, normalize(said)) >= 0.8) return true;
   }
   return false;
+}
+
+// Re-extraction often rewrites a number without changing it, so 264,000, 264000 and 264k are
+// one value, as are 1.5M and 1,500,000. The value is parsed from a decimal string ("1.5e6")
+// so that a suffix never introduces float error.
+const POWER_OF_TEN = { k: 3, m: 6, b: 9 };
+function numbersIn(text) {
+  return new Set(
+    [...text.matchAll(/(\d[\d,]*(?:\.\d+)?)([kmb](?![a-z]))?/gi)].map(([, digits, suffix]) =>
+      Number(`${digits.replaceAll(",", "")}e${POWER_OF_TEN[suffix?.toLowerCase()] ?? 0}`)
+    )
+  );
 }
 
 const normalize = (s) =>

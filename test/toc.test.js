@@ -88,6 +88,39 @@ test("a fact reworded past the similarity threshold is not appended twice", () =
   ]);
 });
 
+const batchCap = (rows, minutes = 25) =>
+  `The dispatch step caps executionBatchSize at ${rows} rows per batch, which binds once ` +
+  `dispatch duration drifts past ${minutes} minutes`;
+const shardLimit = (records) =>
+  `A shard accepts ${records} records an hour before it throttles writes from the producer fleet`;
+
+// One changed number barely moves the word overlap, so an update scored as a rewording of the
+// fact it corrects, and the corpus kept only the stale value.
+test("a fact that changes a number is kept beside the fact it updates", () => {
+  const { config, store } = storeWith({ dispatch: { context: [batchCap("264,000")] } });
+
+  store.appendToTopic("dispatch", "Context", batchCap("400,000"), A_SESSION, HAPPENED_ON);
+  store.appendToTopic("dispatch", "Context", batchCap("264,000", 40), A_SESSION, HAPPENED_ON);
+
+  assert.deepEqual(textsIn(config, "dispatch"), [
+    batchCap("264,000"),
+    batchCap("400,000"),
+    batchCap("264,000", 40),
+  ]);
+});
+
+test("a number written another way is the same number, so the fact is still a duplicate", () => {
+  const { config, store } = storeWith({
+    dispatch: { context: [batchCap("264,000"), shardLimit("1.5M")] },
+  });
+
+  for (const rewritten of [batchCap("264k"), batchCap("264000"), shardLimit("1,500,000")]) {
+    store.appendToTopic("dispatch", "Context", rewritten, A_SESSION, HAPPENED_ON);
+  }
+
+  assert.deepEqual(textsIn(config, "dispatch"), [batchCap("264,000"), shardLimit("1.5M")]);
+});
+
 test("the TOC counts the facts a topic holds", () => {
   const { config, store } = storeWith({
     brazil: { summary: "the build system", context: ["a", "b"], decisions: ["c"] },
