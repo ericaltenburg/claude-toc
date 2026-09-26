@@ -2,9 +2,9 @@ import { existsSync } from "node:fs";
 
 import { createTopicStore } from "../corpus/topics.js";
 import { localDateParts } from "../local-time.js";
-import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "../index/open.js";
+import { openIndex } from "../index/open.js";
+import { SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "../index/queries.js";
 import { salientTermsQuery } from "../index/terms.js";
-import { recordedProjectsUnder } from "../search.js";
 import { createStateStore } from "../sessions/progress.js";
 import { chunkTurns, unreadSlice } from "../sessions/transcript.js";
 import { createModelCall } from "./bedrock.js";
@@ -211,7 +211,7 @@ export function createExtractor(
 
   function topicsOfProject(project) {
     if (!project) return new Set();
-    const projects = recordedProjectsUnder(db, project);
+    const projects = index.recordedProjectsUnder(project);
     const marks = projects.map(() => "?").join(", ");
 
     const rows = db

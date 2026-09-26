@@ -1,10 +1,9 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join, sep } from "node:path";
+import { dirname, join } from "node:path";
 
 import { parseJsonLine } from "./json-lines.js";
-import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./index/open.js";
+import { openIndex } from "./index/open.js";
 import { ftsQuery, termsQuery } from "./index/terms.js";
-import { createStateStore } from "./sessions/progress.js";
 
 export const FACT_LIMIT = 20;
 export const PROMPT_LIMIT = 10;
@@ -50,30 +49,11 @@ function resolvedPath(path) {
   }
 }
 
-function isAtOrUnder(path, root) {
-  return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
-}
-
-export function recordedProjectsUnder(db, path) {
-  const root = resolvedPath(path);
-  const recorded = db
-    .prepare(
-      `select project from prompts where project is not null
-       union select project from sessions where project is not null`
-    )
-    .all()
-    .map((row) => row.project);
-
-  const matching = recorded.filter((value) => isAtOrUnder(resolvedPath(value), root));
-  return matching.length ? matching : [path];
-}
-
 export function createSearch(
   config,
   { timeZone, now = () => new Date(), currentProject = theCurrentProject() } = {}
 ) {
   const index = openIndex(config, { timeZone });
-  const db = index.db;
 
   function refresh() {
     return index.refresh();
@@ -110,13 +90,13 @@ export function createSearch(
 
     const result = { query, mode, facts: null, prompts: null, overview: null, rows: 0 };
     if (mode === "facts" || mode === "both") {
-      result.facts = factRows(query, { ...filters, limit });
+      result.facts = resultClass(query, { ...filters, limit }, index.facts);
     }
     if (mode === "prompts" || mode === "both") {
-      result.prompts = promptRows(query, { ...filters, limit: promptLimit });
+      result.prompts = resultClass(query, { ...filters, limit: promptLimit }, index.prompts);
     }
     if (mode === "overview") {
-      result.overview = overviewRows(query, { ...filters, limit });
+      result.overview = resultClass(query, { ...filters, limit }, index.overview);
     }
     result.rows =
       (result.facts?.rows.length ?? 0) +
@@ -140,88 +120,22 @@ export function createSearch(
   }
 
   function scopeFor({ project, source, allProjects }) {
-    const boundedBy = (path) => ({ projects: projectValuesUnder(path), scopedTo: path });
+    const boundedBy = (path) => ({
+      projects: index.recordedProjectsUnder(path),
+      scopedTo: path,
+    });
     if (project) return boundedBy(project);
     if (source !== CLAUDES_OWN_JUDGEMENT) return { projects: null, scopedTo: null };
     if (allProjects) return { projects: null, scopedTo: null, widened: true };
     return boundedBy(currentProject);
   }
 
-  function projectValuesUnder(path) {
-    return recordedProjectsUnder(db, path);
-  }
-
-  function factRows(query, filters) {
-    return resultClass(query, filters, factPlan, [
-      "f.topic",
-      "f.section",
-      "f.text",
-      "f.session",
-      "f.date",
-      "f.line",
-    ]);
-  }
-
-  function promptRows(query, filters) {
-    return resultClass(query, filters, promptPlan, [
-      "p.local_date",
-      "p.local_time",
-      "p.session",
-      "p.project",
-      "p.text",
-      "p.is_command",
-    ]);
-  }
-
-  function overviewRows(query, filters) {
+  function resultClass(query, filters, read) {
     const { match, matchesNothing } = matchFor(query);
     if (matchesNothing) return NO_ROWS;
 
-    const run = (effective) => {
-      const plan = factPlan(effective, filters);
-      const topicsMatching = countRows(
-        `select count(distinct f.topic) as c from ${plan.from} ${plan.where}`,
-        plan.params
-      );
-      const rows = db
-        .prepare(
-          `select f.topic as topic, t.summary as summary, count(*) as hits
-           from ${plan.from} left join topics t on t.id = f.topic
-           ${plan.where} group by f.topic order by hits desc, f.topic limit ?`
-        )
-        .all(...plan.params, filters.limit)
-        .map(withoutNullPrototype);
-      return { rows, total: topicsMatching, match: effective };
-    };
-
+    const run = (effective) => ({ ...read(effective, filters), match: effective });
     return withTermsFallback(query, match, run);
-  }
-
-  function resultClass(query, filters, plan, columns) {
-    const { match, matchesNothing } = matchFor(query);
-    if (matchesNothing) return NO_ROWS;
-
-    const run = (effective) => {
-      const built = plan(effective, filters);
-      const total = countRows(
-        `select count(*) as c from ${built.from} ${built.where}`,
-        built.params
-      );
-      const rows = db
-        .prepare(
-          `select ${columns.join(", ")} from ${built.from} ${built.where}
-           order by ${built.order} limit ?`
-        )
-        .all(...built.params, filters.limit)
-        .map(withoutNullPrototype);
-      return { rows, total, match: effective };
-    };
-
-    return withTermsFallback(query, match, run);
-  }
-
-  function countRows(sql, params) {
-    return db.prepare(sql).get(...params).c;
   }
 
   function withTermsFallback(query, match, run) {
@@ -239,9 +153,7 @@ export function createSearch(
     checkedSource(source, { allowed: SOURCES, label: "source" });
     assertReadOnly(statement);
     refresh();
-    const rows = whileQueryOnly(db, () => db.prepare(statement).all(...params)).map(
-      withoutNullPrototype
-    );
+    const rows = index.readOnlyQuery(statement, params);
     logSearchBestEffort(config, now, {
       query: statement,
       mode: "sql",
@@ -254,24 +166,7 @@ export function createSearch(
 
   function quarantined() {
     refresh();
-    const state = createStateStore(config).load();
-    const sessions = new Map(
-      db
-        .prepare("select session_id, project, transcript_path from sessions")
-        .all()
-        .map((row) => [row.session_id, row])
-    );
-
-    return Object.entries(state.quarantined ?? {})
-      .map(([sessionId, record]) => ({
-        sessionId,
-        ts: record?.ts ?? null,
-        attempts: record?.attempts ?? null,
-        error: record?.error ?? null,
-        project: sessions.get(sessionId)?.project ?? null,
-        transcriptPath: sessions.get(sessionId)?.transcript_path ?? null,
-      }))
-      .sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
+    return index.quarantinedSessions();
   }
 
   function smoke({ log = true } = {}) {
@@ -296,7 +191,7 @@ export function createSearch(
     return { passed: results.every((result) => result.passed), results };
   }
 
-  return { db, index, refresh, search, sql, quarantined, smoke, close: () => index.close() };
+  return { refresh, search, sql, quarantined, smoke, close: () => index.close() };
 }
 
 function smokeFailure(result, entry, topics) {
@@ -318,81 +213,6 @@ function loadSmokeQueries(config) {
   }
 }
 
-// --- Query plans ---
-
-function conditions() {
-  const clauses = [];
-  const params = [];
-  return {
-    add(clause, value) {
-      clauses.push(clause);
-      params.push(value);
-    },
-    addAll(clause, values) {
-      clauses.push(clause);
-      params.push(...values);
-    },
-    params,
-    where: () => (clauses.length ? `where ${clauses.join(" and ")}` : ""),
-  };
-}
-
-function placeholders(values) {
-  return values.map(() => "?").join(", ");
-}
-
-function factBelongsToOneOf(projects) {
-  return `exists (
-  select 1 from sessions s
-  where s.project in (${placeholders(projects)})
-    and ((f.session is not null and ${SESSION_STARTS_WITH_THE_FACTS_PREFIX})
-      or (f.session is null and s.topic = f.topic)))`;
-}
-
-function factPlan(match, { projects, since, until, topic, section, session }) {
-  const filter = conditions();
-  let from = "facts f";
-
-  if (match) {
-    from = "facts_fts join facts f on f.id = facts_fts.rowid";
-    filter.add("facts_fts match ?", match);
-  }
-  if (since) filter.add("f.date >= ?", since);
-  if (until) filter.add("f.date <= ?", until);
-  if (topic) filter.add("f.topic = ?", topic);
-  if (section) filter.add("lower(f.section) = lower(?)", section);
-  if (session) filter.add("f.session = ?", session);
-  if (projects?.length) filter.addAll(factBelongsToOneOf(projects), projects);
-
-  return {
-    from,
-    where: filter.where(),
-    params: filter.params,
-    order: match ? "bm25(facts_fts), f.date desc" : "f.date desc, f.topic, f.line",
-  };
-}
-
-function promptPlan(match, { projects, since, until, session }) {
-  const filter = conditions();
-  let from = "prompts p";
-
-  if (match) {
-    from = "prompts_fts join prompts p on p.id = prompts_fts.rowid";
-    filter.add("prompts_fts match ?", match);
-  }
-  if (since) filter.add("p.local_date >= ?", since);
-  if (until) filter.add("p.local_date <= ?", until);
-  if (session) filter.add("p.session = ?", session);
-  if (projects?.length) filter.addAll(`p.project in (${placeholders(projects)})`, projects);
-
-  return {
-    from,
-    where: filter.where(),
-    params: filter.params,
-    order: match ? "bm25(prompts_fts), p.ts desc" : "p.ts desc",
-  };
-}
-
 export function checkedSource(value, { allowed, label }) {
   if (allowed.includes(value)) return value;
   throw new Error(`${label} takes ${allowed.join(" or ")}, got ${JSON.stringify(value)}`);
@@ -404,32 +224,16 @@ function loggedAsUnscoped(source) {
 
 const READ_STATEMENT = /^\s*(?:select|with)\b/i;
 
+// The friendly refusal, before anything is refreshed. It is not the guard: the index runs the
+// statement under query_only, which is what refuses a write hidden behind a read.
 function assertReadOnly(statement) {
   if (!READ_STATEMENT.test(String(statement))) {
     throw new Error("the read path is read-only: only select and with statements are allowed");
   }
 }
 
-// The keyword check is only the friendly refusal: "with x as (select 1) delete from facts"
-// starts with a read and passes it. SQLite itself refuses the write under query_only. It
-// matters because Claude runs --sql on its own, and a deleted row stays gone until its topic
-// file changes, since refresh is incremental. The pragma goes back off because the same
-// connection refreshes the index next.
-function whileQueryOnly(db, run) {
-  db.exec("pragma query_only = on");
-  try {
-    return run();
-  } finally {
-    db.exec("pragma query_only = off");
-  }
-}
-
 function isFts5SyntaxError(error) {
   return /fts5/i.test(String(error?.message));
-}
-
-function withoutNullPrototype(row) {
-  return row ? { ...row } : row;
 }
 
 // --- The search log ---
@@ -465,4 +269,3 @@ export function searchLogEntries(config) {
     .map(parseJsonLine)
     .filter(Boolean);
 }
-

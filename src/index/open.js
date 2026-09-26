@@ -1,12 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, rmSync } from "node:fs";
 
+import { createQueries } from "./queries.js";
 import { refreshEverything } from "./refresh.js";
 
 export const SCHEMA_VERSION = 1;
-
-export const SESSION_STARTS_WITH_THE_FACTS_PREFIX =
-  "substr(s.session_id, 1, length(f.session)) = f.session";
 
 const SCHEMA = `
 create table meta (key text primary key, value text not null);
@@ -111,7 +109,7 @@ export function openIndex(config, { timeZone } = {}) {
     }
   }
 
-  return { db, refresh, close: () => db.close() };
+  return { db, refresh, close: () => db.close(), ...createQueries(db, config) };
 }
 
 // More than one process refreshes the index: the extractor after every session, and a

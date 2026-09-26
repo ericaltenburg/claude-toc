@@ -330,7 +330,7 @@ test("the index still refreshes after the sql escape hatch refused a write", () 
     writeTopic(config, "alarm_tuning", { Context: [FACT_WITHOUT_A_SESSION_ID] });
     search.refresh();
 
-    assert.equal(search.db.prepare("select count(*) c from facts").get().c, 4);
+    assert.equal(search.sql("select count(*) c from facts")[0].c, 4);
   });
 });
 
