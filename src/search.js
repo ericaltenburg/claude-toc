@@ -288,7 +288,9 @@ export function createSearch(
     checkedSource(source, { allowed: SOURCES, label: "source" });
     assertReadOnly(statement);
     refresh();
-    const rows = db.prepare(statement).all(...params).map(withoutNullPrototype);
+    const rows = whileQueryOnly(db, () => db.prepare(statement).all(...params)).map(
+      withoutNullPrototype
+    );
     logSearchBestEffort(config, now, {
       query: statement,
       mode: "sql",
@@ -454,6 +456,20 @@ const READ_STATEMENT = /^\s*(?:select|with)\b/i;
 function assertReadOnly(statement) {
   if (!READ_STATEMENT.test(String(statement))) {
     throw new Error("the read path is read-only: only select and with statements are allowed");
+  }
+}
+
+// The keyword check is only the friendly refusal: "with x as (select 1) delete from facts"
+// starts with a read and passes it. SQLite itself refuses the write under query_only. It
+// matters because Claude runs --sql on its own, and a deleted row stays gone until its topic
+// file changes, since refresh is incremental. The pragma goes back off because the same
+// connection refreshes the index next.
+function whileQueryOnly(db, run) {
+  db.exec("pragma query_only = on");
+  try {
+    return run();
+  } finally {
+    db.exec("pragma query_only = off");
   }
 }
 
