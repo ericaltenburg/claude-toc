@@ -130,14 +130,16 @@ function extractionFrom(text) {
   };
 }
 
-// Each fact as { text, supersedes }, from a bare string or from an object carrying its text.
-// Only whole, non-negative numbers survive in supersedes; whether one names a listed fact is
-// for the caller to say, since only the caller holds the list the prompt was built from.
+// Each fact as { text, supersedes }, from a bare string or from an object carrying its text,
+// trimmed the way a fact line reads back. Only whole, non-negative numbers survive in
+// supersedes; whether one names a listed fact is for the caller to say, since only the caller
+// holds the list the prompt was built from.
 function factsIn(value) {
   return (Array.isArray(value) ? value : []).flatMap((item) => {
     const text = typeof item === "string" ? item : item?.text;
     if (typeof text !== "string" || !text.trim()) return [];
     const numbers = Array.isArray(item?.supersedes) ? item.supersedes : [];
-    return [{ text, supersedes: numbers.filter((n) => Number.isInteger(n) && n >= 0) }];
+    const supersedes = numbers.filter((n) => Number.isInteger(n) && n >= 0);
+    return [{ text: text.trim(), supersedes }];
   });
 }

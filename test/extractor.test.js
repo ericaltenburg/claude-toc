@@ -694,6 +694,30 @@ test("a later chunk can supersede what an earlier chunk of the same run returned
   assert.deepEqual(old.superseded, { session: SESSION.slice(0, 8), date: WHEN_THIS_SESSION_HAPPENED });
 });
 
+// Merging chunks folds the two copies into one fact that names itself as superseded, and it is
+// the one line saying that value.
+test("a later chunk restating an earlier chunk's fact, and claiming to supersede it, marks nothing", () => {
+  const config = corpusWithASliceOfSeveralChunks();
+  const restated = "Broadcast variants are keyed by show id";
+  const model = stubModel((call, index) =>
+    index === 0
+      ? MODEL_OUTPUT
+      : {
+          ...MODEL_OUTPUT,
+          context: [{ text: ` ${restated} `, supersedes: [numberOf(call.prompt, restated)] }],
+          decisions: [],
+        }
+  );
+  const extractor = extractorFor(config, model, { maxChunkChars: 400 });
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.equal(result.superseded, 0);
+  assert.equal(topicText(config).includes("[superseded:"), false);
+  assert.equal(factsIn(config, "alcs_broadcast_variants").filter((line) => line.includes(restated)).length, 1);
+});
+
 test("what earlier chunks returned shares the cap on the session's own facts", () => {
   const config = corpusWithASliceOfSeveralChunks();
   writeTopic(config, "earlier_in_this_session", {

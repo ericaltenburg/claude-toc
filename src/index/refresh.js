@@ -54,7 +54,8 @@ function refreshTopics(db, config) {
   );
   const deleteFacts = db.prepare("delete from facts where topic = ?");
   const insertFact = db.prepare(
-    `insert into facts(topic, section, text, session, date, line, superseded_session, superseded_date)
+    `insert into facts(topic, section, text, session, date, line,
+                       superseded_session, superseded_date)
      values (?, ?, ?, ?, ?, ?, ?, ?)`
   );
 

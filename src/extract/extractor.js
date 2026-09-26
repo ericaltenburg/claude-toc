@@ -225,13 +225,16 @@ export function createExtractor(
       summary: merged.topic.summary,
     });
     // A fact marks the ones it supersedes only if it landed. One the section already held is a
-    // restatement, and marking what it restates would leave no current line saying it.
+    // restatement, and marking what it restates would leave no current line saying it. For the
+    // same reason a fact never marks itself, which it names when a later chunk restated an
+    // earlier chunk's fact and the two were merged into one.
     const supersedes = [];
     for (const section of SECTIONS) {
       for (const fact of merged[keyOf(section)]) {
-        if (topics.appendToTopic(topicId, section, fact.text, sessionId, happenedOn)) {
-          supersedes.push(...fact.supersedes);
-        }
+        if (!topics.appendToTopic(topicId, section, fact.text, sessionId, happenedOn)) continue;
+        const itself = (old) =>
+          old.topic === topicId && old.section === section && old.text === fact.text;
+        supersedes.push(...fact.supersedes.filter((old) => !itself(old)));
       }
     }
 
@@ -335,8 +338,8 @@ function mergedByTopic(results) {
 function distinct(facts) {
   const byText = new Map();
   for (const { text, supersedes } of facts) {
-    const said = text.trim();
-    byText.set(said, { text: said, supersedes: [...(byText.get(said)?.supersedes ?? []), ...supersedes] });
+    const earlier = byText.get(text)?.supersedes ?? [];
+    byText.set(text, { text, supersedes: [...earlier, ...supersedes] });
   }
   return [...byText.values()];
 }
