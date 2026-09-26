@@ -3,7 +3,7 @@ import { dirname, join, sep } from "node:path";
 
 import { parseJsonLine } from "./json-lines.js";
 import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
-import { createStateStore } from "./state.js";
+import { createStateStore } from "./sessions/progress.js";
 
 export const FACT_LIMIT = 20;
 export const PROMPT_LIMIT = 10;

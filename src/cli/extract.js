@@ -4,8 +4,8 @@ import { existsSync, statSync } from "node:fs";
 import { createConfig } from "../config.js";
 import { bedrockBilledToOurOwnProfile, createExtractor } from "../extract.js";
 import { createExtractionLock } from "../extraction-lock.js";
-import { indexedSessions } from "../session-index.js";
-import { createStateStore, transcriptHasUnreadTurns } from "../state.js";
+import { createStateStore, transcriptHasUnreadTurns } from "../sessions/progress.js";
+import { indexedSessions } from "../sessions/registry.js";
 import { createSweeper } from "../sweep.js";
 import { createTopicStore } from "../toc.js";
 

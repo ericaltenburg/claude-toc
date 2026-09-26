@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 
 import { summarizeStatus } from "../../src/status.js";
 import { renderStatus } from "../../src/cli/status.js";
-import { createStateStore } from "../../src/state.js";
+import { createStateStore } from "../../src/sessions/progress.js";
 import { SESSION_IS_IDLE_AFTER_MS } from "../../src/sweep.js";
 import {
   idleFor,

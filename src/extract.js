@@ -5,10 +5,10 @@ import { buildExtractPrompt, MalformedOutput, parseModelOutput } from "./extract
 import { localDateParts } from "./local-time.js";
 import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { recordedProjectsUnder, salientTermsQuery } from "./search.js";
-import { createStateStore } from "./state.js";
+import { createStateStore } from "./sessions/progress.js";
+import { chunkTurns, unreadSlice } from "./sessions/transcript.js";
 import { createSpendLog } from "./spend.js";
 import { createTopicStore } from "./toc.js";
-import { chunkTurns, unreadSlice } from "./transcript.js";
 
 export const CANDIDATE_TOPICS_IN_A_PROMPT = 10;
 export const KNOWN_FACTS_IN_A_PROMPT = 20;

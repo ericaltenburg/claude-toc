@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { appendFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 
 import { openIndex, SCHEMA_VERSION } from "../src/search-index.js";
-import { createStateStore } from "../src/state.js";
+import { createStateStore } from "../src/sessions/progress.js";
 import {
   AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
   LATE_ON_26_AUGUST_IN_NEW_YORK,

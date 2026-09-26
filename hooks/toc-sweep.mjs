@@ -6,7 +6,7 @@ import { mkdirSync } from "node:fs";
 
 import { createConfig } from "../src/config.js";
 import { createExtractionLock } from "../src/extraction-lock.js";
-import { createStateStore } from "../src/state.js";
+import { createStateStore } from "../src/sessions/progress.js";
 import { createSweeper } from "../src/sweep.js";
 
 const STDIN_TIMEOUT_MS = 5000;

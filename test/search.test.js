@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { createSearch, ftsQuery } from "../src/search.js";
 import { parseArgs } from "../src/cli/search.js";
-import { createStateStore } from "../src/state.js";
+import { createStateStore } from "../src/sessions/progress.js";
 import {
   AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
   LATE_ON_26_AUGUST_IN_NEW_YORK,

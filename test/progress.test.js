@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 
-import { ATTEMPTS_BEFORE_QUARANTINE, createStateStore } from "../src/state.js";
+import { ATTEMPTS_BEFORE_QUARANTINE, createStateStore } from "../src/sessions/progress.js";
 import { tempCorpus } from "./support/corpus.js";
 
 function freshConfig() {

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { howTheTranscriptOpens } from "./transcript.js";
+import { howTheTranscriptOpens } from "./sessions/transcript.js";
 
 export const SESSION_IS_IDLE_AFTER_MS = 60 * 60_000;
 export const SESSIONS_PER_SWEEP = 3;

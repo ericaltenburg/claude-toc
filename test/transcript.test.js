@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { chunkTurns, howTheTranscriptOpens, unreadSlice } from "../src/transcript.js";
+import { chunkTurns, howTheTranscriptOpens, unreadSlice } from "../src/sessions/transcript.js";
 import { EXTRACTION_PROMPT_MARKER } from "../src/extract-prompt.js";
 import { tempCorpus, writeRawTranscript, writeTranscript } from "./support/corpus.js";
 

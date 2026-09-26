@@ -9,9 +9,9 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
-import { EXTRACTION_PROMPT_MARKER } from "./extract-prompt.js";
-import { parseJsonLine } from "./json-lines.js";
-import { START_OF_TRANSCRIPT } from "./state.js";
+import { EXTRACTION_PROMPT_MARKER } from "../extract-prompt.js";
+import { parseJsonLine } from "../json-lines.js";
+import { START_OF_TRANSCRIPT } from "./progress.js";
 
 const NEWLINE = 0x0a;
 const READ_CHUNK_BYTES = 64 * 1024;

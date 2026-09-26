@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 
 import { createExtractor, SAME_SESSION_FACTS_IN_A_PROMPT } from "../src/extract.js";
 import { createSearch } from "../src/search.js";
-import { createStateStore } from "../src/state.js";
+import { createStateStore } from "../src/sessions/progress.js";
 import {
   appendSessions,
   appendTranscript,

@@ -6,7 +6,7 @@ import { localDateParts } from "./local-time.js";
 import { createSearch, searchLogEntries, SOURCES } from "./search.js";
 import { openIndex } from "./search-index.js";
 import { createSpendLog, UNDATED } from "./spend.js";
-import { createStateStore } from "./state.js";
+import { createStateStore } from "./sessions/progress.js";
 import { createSweeper } from "./sweep.js";
 
 export const HEALTHY = "healthy";
