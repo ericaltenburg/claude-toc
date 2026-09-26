@@ -120,6 +120,10 @@ it did not apply. The schema:
 - `topics(id, summary, keywords, mtime_ms, size)`.
 - `sessions(session_id, transcript_path, project, started_at, extracted_at, topic,
   extraction_offset)`.
+- `entities(fact_id, kind, value)` — the identifiers a fact mentions, joined on
+  `fact_id = facts.id`. `kind` is `ticket`, `cr`, `account`, `arn`, `sha`, `url`
+  or `path`; `value` compares without regard to case, and a URL is stored
+  without its scheme or a trailing slash.
 - `facts_fts` and `prompts_fts` — external-content FTS5 over `text`, joined on
   `rowid = facts.id` / `prompts.id`, ranked with `bm25(...)`.
 

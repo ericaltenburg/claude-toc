@@ -85,6 +85,9 @@ re-extracted.
 
 The queryable derivation of the corpus and the prompt log: topics, facts,
 prompts, and sessions in SQLite, with full-text tables over facts and prompts.
+It also holds each fact's **entities**, the hard identifiers it mentions
+(tickets, CRs, accounts, ARNs, SHAs, URLs and paths), found by pattern when the
+fact is indexed, so the markdown never carries them (ADR 0020).
 
 The index is **derived and disposable**. Markdown stays the source of truth, and
 deleting the index costs nothing but the time to rebuild it. Nothing writes a
