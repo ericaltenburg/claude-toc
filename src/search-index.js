@@ -13,8 +13,9 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 
-import { parsePromptRecord, parseSessionRecord, parseTopic } from "./parse.js";
+import { parsePromptRecord, parseTopic } from "./parse.js";
 import { createStateStore } from "./sessions/progress.js";
+import { parseSessionRecord } from "./sessions/registry.js";
 import { createTopicStore } from "./toc.js";
 
 export const SCHEMA_VERSION = 1;

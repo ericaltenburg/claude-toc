@@ -67,15 +67,3 @@ export function parsePromptRecord(line, timeZone) {
     isCommand: text.startsWith("/") ? 1 : 0,
   };
 }
-
-export function parseSessionRecord(line) {
-  const record = parseJsonLine(line);
-  if (!record?.session_id) return null;
-
-  return {
-    sessionId: record.session_id,
-    transcriptPath: record.transcript ?? null,
-    project: record.cwd ?? null,
-    startedAt: record.started ?? null,
-  };
-}
