@@ -52,16 +52,23 @@ export function createTopicStore(config) {
   // --- Topic file operations ---
 
   function appendToTopic(topicId, section, entry, sessionId, date) {
+    appendFactLine(topicId, section, factLine(entry, sessionId, date), entry);
+  }
+
+  // A fact arrives here already written, attribution and all, when merging moves it between
+  // topics. Sending it back through appendToTopic would attribute it a second time — the
+  // merge's own date and a session of `unknown` stamped over the session and date the fact
+  // came from, which is the provenance a fact *is* and the damage ADR 0013 had to repair.
+  function appendFactLine(topicId, section, line, factText) {
     const topicFile = topicPath(topicId);
     if (!existsSync(topicFile)) return;
 
     const content = readFileSync(topicFile, "utf-8");
-    const line = factLine(entry, sessionId, date);
     const block = sectionBlock(content, section);
 
     if (!block) {
       writeFileSync(topicFile, `${content}\n## ${section}\n\n${line}`);
-    } else if (isDuplicateFact(block.text, entry)) {
+    } else if (isDuplicateFact(block.text, factText)) {
       return;
     } else {
       writeFileSync(topicFile, content.slice(0, block.end) + line + content.slice(block.end));
@@ -89,13 +96,19 @@ export function createTopicStore(config) {
 
   // --- Similarity ---
 
-  function findSimilarTopic(candidateId, candidateKeywords) {
+  // `excluding` names a topic the caller does not want back. Extraction asks about an id the
+  // model just proposed and does want itself back when that id already exists, because
+  // reusing the topic is the whole point. Dedup asks about a topic that is in the TOC by
+  // definition, and a topic scores 1.00 against itself, so dedup must exclude it or it only
+  // ever learns that every topic resembles itself.
+  function findSimilarTopic(candidateId, candidateKeywords, { excluding = null } = {}) {
     const toc = loadToc();
     let best = null;
     const candidateWords = new Set(candidateId.split("_"));
     const candidateKwSet = new Set(candidateKeywords);
 
     for (const [id, topic] of Object.entries(toc.topics)) {
+      if (id === excluding) continue;
       const kwScore = jaccardSimilarity(candidateKwSet, new Set(topic.keywords));
       const idScore = jaccardSimilarity(candidateWords, new Set(id.split("_")));
       const score = 0.7 * kwScore + 0.3 * idScore;
@@ -147,12 +160,20 @@ export function createTopicStore(config) {
       const block = sectionBlock(loserContent, section);
       if (!block) continue;
       for (const fact of factLines(block.text)) {
-        appendToTopic(winnerId, section, fact);
+        appendFactLine(winnerId, section, `- ${fact}\n`, withoutAttribution(fact));
       }
     }
   }
 
-  function dedupTopics() {
+  // Merging renames and rewrites corpus files, and the corpus has no backup (ADR 0001), so the
+  // pairing runs without `apply` too: one loop decides the pairs either way, and only the merge
+  // itself is withheld. A plan computed by separate code could disagree with what apply then
+  // does, which would make the plan worse than no plan at all.
+  //
+  // The plan still is not a promise. Applying a merge unions the winner's keywords, so on a
+  // corpus where merges chain, a later pair can score differently once an earlier one has
+  // landed. A single planned merge is exact; the tail of a longer plan is a forecast.
+  function dedupTopics({ apply = true } = {}) {
     const ids = Object.keys(loadToc().topics);
     const merges = [];
     const merged = new Set();
@@ -160,18 +181,21 @@ export function createTopicStore(config) {
     for (let i = 0; i < ids.length; i++) {
       if (merged.has(ids[i])) continue;
       for (let j = i + 1; j < ids.length; j++) {
+        // ids[i] can lose its own pairing and be gone from the TOC by now, and a merged
+        // topic is nobody's best match afterwards.
+        if (merged.has(ids[i])) break;
         if (merged.has(ids[j])) continue;
         const keywords = loadToc().topics[ids[j]].keywords;
-        const match = findSimilarTopic(ids[j], keywords);
+        const match = findSimilarTopic(ids[j], keywords, { excluding: ids[j] });
         if (!match || match.id !== ids[i]) continue;
         const { winnerId, loserId } = pickMergeWinner(ids[i], ids[j]);
-        mergeTopics(winnerId, loserId);
+        if (apply) mergeTopics(winnerId, loserId);
         merged.add(loserId);
         merges.push({ winnerId, loserId, score: match.score });
       }
     }
 
-    return { merges, remaining: ids.length - merged.size };
+    return { merges, remaining: ids.length - merged.size, applied: apply };
   }
 
   return {
@@ -222,14 +246,17 @@ function factLines(sectionText) {
     .map((l) => l.replace(/^- /, ""));
 }
 
+// A fact's own words, with the session and date it came from taken off the end. Two facts are
+// compared by what they say, never by where they came from.
+function withoutAttribution(fact) {
+  return fact.replace(/ \[session:.*\]$/, "").replace(/ \[\d{4}-\d{2}-\d{2}\]$/, "");
+}
+
 function isDuplicateFact(sectionText, entry) {
   if (sectionText.includes(entry.slice(0, 60))) return true;
   const newWords = normalize(entry);
   for (const fact of factLines(sectionText)) {
-    const bare = fact
-      .replace(/ \[session:.*\]$/, "")
-      .replace(/ \[\d{4}-\d{2}-\d{2}\]$/, "");
-    if (jaccardSimilarity(newWords, normalize(bare)) >= 0.8) return true;
+    if (jaccardSimilarity(newWords, normalize(withoutAttribution(fact))) >= 0.8) return true;
   }
   return false;
 }

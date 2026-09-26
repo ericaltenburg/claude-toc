@@ -128,14 +128,8 @@ test("a topic is similar when its keywords and its id overlap enough", () => {
 
 // pickMergeWinner and mergeTopics are private, so dedup is the only way in: these exercise
 // merging exactly as `toc-extract --dedup` does.
-//
-// THESE THREE ARE SKIPPED BECAUSE MERGING IS BROKEN, NOT BECAUSE IT IS UNIMPORTANT.
-// findSimilarTopic scans every topic including the candidate itself, which scores 1.00, so
-// dedupTopics' `match.id !== ids[i]` guard always continues and no pair can ever merge. The
-// last test in this file pins that as today's behaviour; unskip these three when it is fixed.
-const MERGING_IS_BROKEN = { skip: "findSimilarTopic matches the candidate against itself" };
 
-test("dedup merges a similar pair, moving the loser's facts to the winner", MERGING_IS_BROKEN, () => {
+test("dedup merges a similar pair, moving the loser's facts to the winner", () => {
   const { config, store } = storeWith({
     brazil_build_system: { keywords: ["brazil", "build", "versionset"], context: ["uses version sets", "resolves deps"] },
     brazil_build_systems: { keywords: ["brazil", "build", "versionset"], context: ["has a Config file"] },
@@ -152,7 +146,7 @@ test("dedup merges a similar pair, moving the loser's facts to the winner", MERG
   ]);
 });
 
-test("the topic holding more facts wins, and the loser leaves a tombstone and the TOC", MERGING_IS_BROKEN, () => {
+test("the topic holding more facts wins, and the loser leaves a tombstone and the TOC", () => {
   const { config, store } = storeWith({
     brazil_build_system: { keywords: ["brazil", "build"], context: ["a", "b"] },
     brazil_build_systems: { keywords: ["brazil", "build"], context: ["c"] },
@@ -168,11 +162,18 @@ test("the topic holding more facts wins, and the loser leaves a tombstone and th
   assert.equal("brazil_build_systems" in store.loadToc().topics, false);
 });
 
-test("the winner keeps the union of both keyword sets and the longer summary", MERGING_IS_BROKEN, () => {
+// The keyword sets overlap without being equal, because a pair has to clear the similarity
+// threshold before there is any union to keep: keywords carry 0.7 of the score, so two topics
+// sharing no keyword score 0.15 on their ids alone and never meet.
+test("the winner keeps the union of both keyword sets and the longer summary", () => {
   const { store } = storeWith({
-    brazil_build_system: { keywords: ["brazil"], summary: "short", context: ["a", "b"] },
+    brazil_build_system: {
+      keywords: ["brazil", "build", "versionset"],
+      summary: "short",
+      context: ["a", "b"],
+    },
     brazil_build_systems: {
-      keywords: ["build"],
+      keywords: ["brazil", "build", "versionset", "config"],
       summary: "a considerably longer summary of the same subject",
       context: ["c"],
     },
@@ -181,7 +182,7 @@ test("the winner keeps the union of both keyword sets and the longer summary", M
   store.dedupTopics();
 
   const winner = store.loadToc().topics.brazil_build_system;
-  assert.deepEqual(winner.keywords.sort(), ["brazil", "build"]);
+  assert.deepEqual(winner.keywords.sort(), ["brazil", "build", "config", "versionset"]);
   assert.equal(winner.summary, "a considerably longer summary of the same subject");
   assert.equal(winner.entries, 3);
 });
@@ -211,15 +212,22 @@ test("dedup over topics that resemble nothing merges nothing", () => {
   assert.equal(remaining, 2);
 });
 
-// The defect the three skipped tests above are waiting on. Delete this when merging works.
-test("dedup merges nothing today, because every topic best-matches itself", () => {
+// A topic scores 1.00 against itself. Extraction wants that: it asks about the id the model
+// proposed and reusing an existing topic is the point. Dedup cannot use it, which is why it
+// passes `excluding` — and why merging silently did nothing until it did.
+test("a topic already in the TOC matches itself, unless the caller excludes it", () => {
   const { store } = storeWith({
     brazil_build_system: { keywords: ["brazil", "build", "versionset"], context: ["a", "b"] },
     brazil_build_systems: { keywords: ["brazil", "build", "versionset"], context: ["c"] },
   });
+  const keywords = ["brazil", "build", "versionset"];
 
-  const itself = store.findSimilarTopic("brazil_build_systems", ["brazil", "build", "versionset"]);
+  const itself = store.findSimilarTopic("brazil_build_systems", keywords);
+  const other = store.findSimilarTopic("brazil_build_systems", keywords, {
+    excluding: "brazil_build_systems",
+  });
 
   assert.equal(itself.id, "brazil_build_systems");
-  assert.deepEqual(store.dedupTopics(), { merges: [], remaining: 2 });
+  assert.equal(itself.score, 1);
+  assert.equal(other.id, "brazil_build_system");
 });
