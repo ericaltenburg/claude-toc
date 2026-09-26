@@ -38,7 +38,7 @@ rebuild anything.
 | `--date`, `--since`, `--until` | local dates, `YYYY-MM-DD` |
 | `--project PATH` | scope to one project directory and what is under it |
 | `--all-projects` | undo the scoping an automatic search applies |
-| `--topic ID`, `--section Decisions`, `--session ID` | narrow to one |
+| `--topic ID`, `--section NAME`, `--session ID` | narrow to one; the sections are `Context`, `Decisions`, `Gotchas`, `Open` |
 | `--limit N`, `--prompt-limit N` | override the default sizes (`--limit` also caps an overview) |
 | `--source automatic` | your own judgement: logged as such, scoped to the current project |
 | `--sql "select ..."` | anything the above cannot express |
@@ -87,13 +87,18 @@ the same material the root does. `--project PATH` points somewhere else;
 The attribution contract, which is the whole reason results are trustworthy:
 
 - A retrieved fact is **dated evidence, not current truth**. Say "a session on
-  2026-05-12 recorded X", never "X is true". Nothing in this system will ever
-  write "that changed", so a fact about a pinned version stays confident and
-  wrong after the bump.
+  2026-05-12 recorded X", never "X is true". A fact is marked superseded only
+  when a later session changed it where extraction could see both, so an
+  unmarked fact about a pinned version can still be wrong after the bump.
 - Anything load-bearing is checked against the systems of record (the code, the
   config, git, tickets) before it is acted on.
 - Keep a fact's section: **Context** is what was true, **Decisions** is what was
-  chosen. Do not flatten them into one list.
+  chosen, **Gotchas** is a trap with its cause or fix, **Open** is what was still
+  unsettled. Do not flatten them into one list.
+- A fact labelled `superseded YYYY-MM-DD` is history, dated at both ends: "a
+  session on 2026-05-12 recorded X, and a session on 2026-09-20 superseded it".
+  Superseded facts come back after the current ones; the current one is the
+  answer and the superseded one is how it got there.
 - Keep facts and prompts separate. A prompt is raw text the user typed, not a
   distilled fact, and must never be presented as one.
 - Facts record what a session concluded, not world state. Whether the chosen
@@ -107,8 +112,9 @@ for you: filter on `project` yourself when the question is about this project on
 An automatic `--sql` query is logged as unscoped, so the log never claims a bound
 it did not apply. The schema:
 
-- `facts(id, topic, section, text, session, date, line)` — `date` is `YYYY-MM-DD`
-  and may be null.
+- `facts(id, topic, section, text, session, date, line, superseded_session,
+  superseded_date)` — `date` is `YYYY-MM-DD` and may be null; `superseded_date`
+  is null for a current fact.
 - `prompts(id, ts, local_date, local_time, session, project, text, is_command)`.
 - `topics(id, summary, keywords, mtime_ms, size)`.
 - `sessions(session_id, transcript_path, project, started_at, extracted_at, topic,
@@ -131,9 +137,10 @@ toc-search --sql "select topic, count(*) hits, min(date) first, max(date) last
                   from facts where date between '2026-08-24' and '2026-08-28'
                   group by topic order by hits desc"
 
-# Decisions only, newest first.
+# Decisions no later session superseded, newest first.
 toc-search --sql "select date, topic, text from facts
-                  where section = 'Decisions' and date >= '2026-07-01'
+                  where section = 'Decisions' and superseded_date is null
+                    and date >= '2026-07-01'
                   order by date desc limit 30"
 ```
 
