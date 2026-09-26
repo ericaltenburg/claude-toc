@@ -44,6 +44,7 @@ test("a fact is appended under its section with the session and date it came fro
       text: "uses version sets",
       session: A_SESSION.slice(0, 8),
       date: HAPPENED_ON,
+      superseded: null,
       section: "Context",
       line: 4,
     },
@@ -51,6 +52,7 @@ test("a fact is appended under its section with the session and date it came fro
       text: "will pin the major version",
       session: A_SESSION.slice(0, 8),
       date: HAPPENED_ON,
+      superseded: null,
       section: "Decisions",
       line: 7,
     },
@@ -138,6 +140,46 @@ test("a number written another way is the same number, so the fact is still a du
   }
 
   assert.deepEqual(textsIn(config, "dispatch"), [batchCap("264,000"), shardLimit("1.5M")]);
+});
+
+// --- Supersession ---
+
+const A_LATER_DAY = "2026-09-20";
+
+test("a superseded fact keeps its line as written and gains a marker naming what superseded it", () => {
+  const { config, store } = storeWith({ dispatch: { context: [batchCap("264,000")] } });
+  const before = readFileSync(topicPath(config, "dispatch"), "utf-8");
+  const oldFact = { section: "Context", text: batchCap("264,000") };
+
+  assert.equal(store.markSuperseded("dispatch", oldFact, ANOTHER_SESSION, A_LATER_DAY), true);
+
+  const after = readFileSync(topicPath(config, "dispatch"), "utf-8");
+  assert.equal(after, before.replace("]\n", `] [superseded:${ANOTHER_SESSION.slice(0, 8)}, ${A_LATER_DAY}]\n`));
+  assert.deepEqual(factsIn(config, "dispatch")[0].superseded, {
+    session: ANOTHER_SESSION.slice(0, 8),
+    date: A_LATER_DAY,
+  });
+  assert.equal(store.markSuperseded("dispatch", oldFact, ANOTHER_SESSION, A_LATER_DAY), false);
+  assert.equal(store.markSuperseded("no_such_topic", oldFact, ANOTHER_SESSION, A_LATER_DAY), false);
+  assert.equal(readFileSync(topicPath(config, "dispatch"), "utf-8"), after);
+});
+
+// A value that changed and then changed back is current again, so the line saying it is not a
+// duplicate of the line a later session marked stale.
+test("a fact that only repeats a superseded one is appended as current", () => {
+  const { config, store } = storeWith({ dispatch: { context: [batchCap("264,000")] } });
+  store.markSuperseded("dispatch", { section: "Context", text: batchCap("264,000") }, ANOTHER_SESSION, A_LATER_DAY);
+
+  assert.equal(store.appendToTopic("dispatch", "Context", batchCap("264,000"), A_SESSION, A_LATER_DAY), true);
+  assert.equal(store.appendToTopic("dispatch", "Context", batchCap("264,000"), A_SESSION, A_LATER_DAY), false);
+
+  assert.deepEqual(
+    factsIn(config, "dispatch").map((fact) => [fact.text, fact.superseded?.date ?? null]),
+    [
+      [batchCap("264,000"), A_LATER_DAY],
+      [batchCap("264,000"), null],
+    ]
+  );
 });
 
 test("the TOC counts the facts a topic holds", () => {
@@ -290,6 +332,42 @@ test("the facts a merge moves keep their own session and date, and a second dedu
   assert.deepEqual(again.merges, []);
   assert.equal(readFileSync(topicPath(config, "brazil_build_system"), "utf-8"), winnerFile);
   assert.deepEqual(store.loadToc(), toc);
+});
+
+test("a merge carries a superseded fact across with its marker, byte for byte", () => {
+  const { config, store } = storeWith({
+    brazil_build_system: { keywords: ["brazil", "build", "versionset"], context: ["a", "b", "c"] },
+    brazil_build_systems: {
+      keywords: ["brazil", "build", "versionset"],
+      context: ["pins major version 3.0"],
+      session: ANOTHER_SESSION,
+      date: AN_EARLIER_DAY,
+    },
+  });
+  store.markSuperseded(
+    "brazil_build_systems",
+    { section: "Context", text: "pins major version 3.0" },
+    A_SESSION,
+    HAPPENED_ON
+  );
+  store.appendToTopic("brazil_build_systems", "Open", "whether to take 4.0 is undecided", ANOTHER_SESSION, AN_EARLIER_DAY);
+  const loserLines = readFileSync(topicPath(config, "brazil_build_systems"), "utf-8")
+    .split("\n")
+    .filter((line) => line.startsWith("- "));
+
+  store.dedupTopics({ apply: true });
+
+  const winnerLines = readFileSync(topicPath(config, "brazil_build_system"), "utf-8").split("\n");
+  for (const line of loserLines) assert.ok(winnerLines.includes(line), line);
+  assert.deepEqual(
+    factsIn(config, "brazil_build_system")
+      .filter((fact) => fact.session === ANOTHER_SESSION.slice(0, 8))
+      .map((fact) => [fact.section, fact.text, fact.superseded]),
+    [
+      ["Context", "pins major version 3.0", { session: A_SESSION.slice(0, 8), date: HAPPENED_ON }],
+      ["Open", "whether to take 4.0 is undecided", null],
+    ]
+  );
 });
 
 test("a tombstone renames the topic file's own extension, not an earlier .md in its path", () => {

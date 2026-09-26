@@ -11,6 +11,11 @@
 //
 // Older lines carry the date alone, `[2026-04-24]`, and a line carrying neither is still a
 // fact, with no session and no date.
+//
+// A fact a later session superseded keeps its line and gains a second group after the first,
+// naming the session and date that superseded it (ADR 0019):
+//
+//   - Batch size is 264,000 [session:316972f2, 2026-05-12] [superseded:ef56ab78, 2026-09-20]
 
 export const SECTIONS = ["Context", "Decisions", "Gotchas", "Open"];
 
@@ -27,12 +32,33 @@ const HEADING = /^##[ \t]+(.+?)[ \t]*$/;
 // what the writer appends and what the readers take off cannot disagree.
 const ATTRIBUTED = /^(.*?)\s*\[(?:session:([^\s,\]]+),\s*)?(\d{4}-\d{2}-\d{2})\]$/;
 
+// The marker is taken off before the attribution is read, so a line that had no attribution
+// of its own can still be superseded.
+const SUPERSEDED = /^(.*?)\s*\[superseded:([^\s,\]]+),\s*(\d{4}-\d{2}-\d{2})\]$/;
+
 // --- Writing ---
 
 export function factLine(text, sessionId, whenTheConversationHappened) {
   const date = whenTheConversationHappened ?? new Date().toISOString().slice(0, 10);
-  const session = sessionId?.slice(0, SESSION_ID_LENGTH_ON_A_FACT) || NO_SESSION;
-  return `- ${text} [session:${session}, ${date}]\n`;
+  return `- ${text} [session:${sessionOnAFact(sessionId)}, ${date}]\n`;
+}
+
+// The topic file with one fact marked superseded, or null when no current fact in that section
+// says exactly that text. The line is found by what it says, not by its number, because facts
+// appended since it was read have moved it. Everything already on the line stays as it was.
+export function markSupersededIn(markdown, { section, text }, sessionId, date) {
+  const target = parseTopic(markdown).find(
+    (fact) => fact.section === section && fact.text === text && !fact.superseded
+  );
+  if (!target) return null;
+
+  const lines = markdown.split("\n");
+  lines[target.line - 1] += ` [superseded:${sessionOnAFact(sessionId)}, ${date}]`;
+  return lines.join("\n");
+}
+
+function sessionOnAFact(sessionId) {
+  return sessionId?.slice(0, SESSION_ID_LENGTH_ON_A_FACT) || NO_SESSION;
 }
 
 export function newTopicFile(id) {
@@ -59,7 +85,14 @@ export function sectionBlock(content, section) {
 
 export function parseFactLine(line) {
   const item = LIST_ITEM.exec(line);
-  return item ? attributed(item[1].trim()) : null;
+  if (!item) return null;
+
+  const body = item[1].trim();
+  const marker = SUPERSEDED.exec(body);
+  return {
+    ...attributed(marker ? marker[1] : body),
+    superseded: marker ? { session: marker[2], date: marker[3] } : null,
+  };
 }
 
 export function parseTopic(markdown) {
@@ -85,12 +118,12 @@ export function parseTopic(markdown) {
 }
 
 // Every fact line in a stretch of a topic file, as written and as said. `line` is what a merge
-// carries to another topic untouched, attribution and all, and `text` is what dedup compares:
-// two facts are compared by what they say, never by where they came from.
+// carries to another topic untouched, attribution and marker and all, and `text` is what dedup
+// compares: two facts are compared by what they say, never by where they came from.
 export function factLinesIn(markdown) {
   return markdown.split("\n").flatMap((line) => {
     const fact = parseFactLine(line);
-    return fact ? [{ line: `${line}\n`, text: fact.text }] : [];
+    return fact ? [{ line: `${line}\n`, text: fact.text, superseded: fact.superseded }] : [];
   });
 }
 
