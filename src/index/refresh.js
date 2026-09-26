@@ -6,17 +6,7 @@
 // Refresh is incremental. A topic file is reparsed only when its modification time or size
 // changed, and the two logs are read only past the byte offset already consumed.
 
-import {
-  closeSync,
-  existsSync,
-  fstatSync,
-  openSync,
-  readFileSync,
-  readSync,
-  readdirSync,
-  statSync,
-} from "node:fs";
-import { basename, join } from "node:path";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 
 import { parseTopic } from "../corpus/format.js";
 import { createTopicStore } from "../corpus/topics.js";
@@ -39,17 +29,13 @@ export function refreshEverything(db, config, timeZone) {
 // --- Topics and facts ---
 
 function refreshTopics(db, config) {
-  const files = existsSync(config.topicsDir)
-    ? readdirSync(config.topicsDir).filter(
-        (file) => file.endsWith(".md") && !file.endsWith(".merged.md")
-      )
-    : [];
+  const topics = createTopicStore(config);
 
   const known = new Map(
     db.prepare("select id, mtime_ms, size from topics").all().map((row) => [row.id, row])
   );
 
-  const toc = loadToc(config);
+  const toc = tocEntries(topics);
   const upsertTopic = db.prepare(
     `insert into topics(id, summary, keywords, mtime_ms, size) values (?, ?, ?, ?, ?)
      on conflict(id) do update set
@@ -67,11 +53,9 @@ function refreshTopics(db, config) {
   let parsed = 0;
   let factsIndexed = 0;
 
-  for (const file of files) {
-    const id = basename(file, ".md");
+  for (const { id, path } of topics.topicFiles()) {
     seen.add(id);
 
-    const path = join(config.topicsDir, file);
     const stat = statSync(path);
     const factsUnchanged = matchesIndexedFile(known.get(id), stat);
 
@@ -112,9 +96,9 @@ function keywordText(entry) {
   return Array.isArray(entry.keywords) ? entry.keywords.join(" ") : null;
 }
 
-function loadToc(config) {
+function tocEntries(topics) {
   try {
-    return createTopicStore(config).loadToc().topics ?? {};
+    return topics.loadToc().topics ?? {};
   } catch {
     return {};
   }

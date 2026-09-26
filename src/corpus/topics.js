@@ -1,5 +1,5 @@
-import { readFileSync, mkdirSync, existsSync, renameSync } from "fs";
-import { join } from "path";
+import { readFileSync, readdirSync, mkdirSync, existsSync, renameSync } from "fs";
+import { basename, join } from "path";
 
 import { writeFileAtomically } from "../write-atomically.js";
 import {
@@ -12,7 +12,16 @@ import {
 } from "./format.js";
 
 export function createTopicStore(config) {
-  const topicPath = (topicId) => join(config.topicsDir, `${topicId}.md`);
+  const topicPath = (topicId) => join(config.topicsDir, `${topicId}${TOPIC_FILE}`);
+
+  // Every topic file the corpus holds, by id. A merged topic's tombstone is not one: it is
+  // what the loser of a merge leaves behind, and its facts already live in the winner.
+  function topicFiles() {
+    if (!existsSync(config.topicsDir)) return [];
+    return readdirSync(config.topicsDir)
+      .filter((file) => file.endsWith(TOPIC_FILE) && !file.endsWith(MERGED_TOMBSTONE))
+      .map((file) => ({ id: basename(file, TOPIC_FILE), path: join(config.topicsDir, file) }));
+  }
 
   // --- TOC operations ---
 
@@ -203,6 +212,7 @@ export function createTopicStore(config) {
   }
 
   return {
+    topicFiles,
     loadToc,
     upsertTopic,
     appendToTopic,
@@ -212,6 +222,7 @@ export function createTopicStore(config) {
   };
 }
 
+const TOPIC_FILE = ".md";
 const MERGED_TOMBSTONE = ".merged.md";
 
 function union(a, b) {
