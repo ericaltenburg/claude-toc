@@ -113,6 +113,24 @@ test("a filter with no query terms is a search, not a usage error", () => {
   assert.equal(result.stdout.includes("keyed by show id"), false);
 });
 
+test("--topic and --section return no prompts, since a prompt has neither", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", FACTS);
+  appendPrompts(config, [{ display: "how do variants work again?" }]);
+
+  for (const filter of [["--topic", "broadcast_variants"], ["--section", "Decisions"]]) {
+    const both = run(config, [...filter, "variants"]);
+    const promptsOnly = run(config, ["--prompts", ...filter, "variants"]);
+
+    assert.equal(both.status, 0);
+    assert.match(both.stdout, /^FACTS {2}\d of \d$/m);
+    assert.equal(both.stdout.includes("PROMPTS"), false);
+    assert.match(both.stdout, /dated evidence, not current truth/);
+    assert.equal(promptsOnly.status, 0);
+    assert.equal(promptsOnly.stdout, "no results.\n");
+  }
+});
+
 test("--section Gotchas returns the gotchas alone", () => {
   const config = tempCorpus();
   writeTopic(config, "broadcast_variants", {

@@ -16,7 +16,7 @@ const USAGE = `toc-search [options] [query]
   --since / --until YYYY-MM-DD       a local date range
   --project PATH                     scope to one project directory and what is under it
   --all-projects                     undo the scoping an automatic search applies
-  --topic ID / --section NAME        scope to one topic or section
+  --topic ID / --section NAME        scope to one topic or section; facts only
   --session ID                       scope to one session
   --entity VALUE                     facts mentioning a ticket, CR, account, ARN, SHA,
                                      URL or path, in any case; facts only

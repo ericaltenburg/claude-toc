@@ -99,9 +99,10 @@ export function createSearch(
         result.facts = { ...result.facts, rows: result.facts.rows.map(withItsEntities) };
       }
     }
-    // Entities are found in facts only, so an entity search has no prompts to return, rather
-    // than every prompt the other filters allow.
-    if ((mode === "prompts" || mode === "both") && !entity) {
+    // A prompt has no entity, topic or section, so a search filtered on one has no prompts to
+    // return, rather than every prompt the other filters allow.
+    const onlyFactsCanMatch = Boolean(entity || topic || section);
+    if ((mode === "prompts" || mode === "both") && !onlyFactsCanMatch) {
       result.prompts = resultClass(query, { ...filters, limit: promptLimit }, index.prompts);
     }
     if (mode === "overview") {

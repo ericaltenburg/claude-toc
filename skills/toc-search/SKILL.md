@@ -38,7 +38,7 @@ rebuild anything.
 | `--date`, `--since`, `--until` | local dates, `YYYY-MM-DD` |
 | `--project PATH` | scope to one project directory and what is under it |
 | `--all-projects` | undo the scoping an automatic search applies |
-| `--topic ID`, `--section NAME`, `--session ID` | narrow to one; the sections are `Context`, `Decisions`, `Gotchas`, `Open` |
+| `--topic ID`, `--section NAME`, `--session ID` | narrow to one, and `--topic` or `--section` returns no prompts; the sections are `Context`, `Decisions`, `Gotchas`, `Open` |
 | `--entity LIVE-53452` | only facts naming that ticket, CR, account, ARN, SHA, URL or path, in any case, and no prompts. Reach for it with any hyphenated id: query terms split one in two |
 | `--limit N`, `--prompt-limit N` | override the default sizes (`--limit` also caps an overview) |
 | `--source automatic` | your own judgement: logged as such, scoped to the current project |
