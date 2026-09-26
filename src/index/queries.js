@@ -6,6 +6,7 @@ import { realpathSync } from "node:fs";
 import { sep } from "node:path";
 
 import { createStateStore } from "../sessions/progress.js";
+import { lookupForm } from "./entities.js";
 
 // A fact carries only the first eight characters of its session id, so the join from a fact to
 // its session is equality on a computed prefix. Never LIKE, whose wildcards the session field
@@ -305,7 +306,11 @@ function factBelongsToOneOf(projects) {
       or (f.session is null and s.topic = f.topic)))`;
 }
 
-function factPlan(match, { projects, since, until, topic, section, session }) {
+// The entities table's value compares without regard to case, so this equality does too, and
+// it is answered from the index on value.
+const FACT_CARRIES_THE_ENTITY = "f.id in (select e.fact_id from entities e where e.value = ?)";
+
+function factPlan(match, { projects, since, until, topic, section, session, entity }) {
   const filter = conditions();
   let from = "facts f";
 
@@ -319,6 +324,7 @@ function factPlan(match, { projects, since, until, topic, section, session }) {
   if (section) filter.add("lower(f.section) = lower(?)", section);
   if (session) filter.add("f.session = ?", session);
   if (projects?.length) filter.addAll(factBelongsToOneOf(projects), projects);
+  if (entity) filter.add(FACT_CARRIES_THE_ENTITY, lookupForm(entity));
 
   return {
     from,

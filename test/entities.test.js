@@ -1,11 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rmSync, utimesSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { readFileSync, rmSync, utimesSync } from "node:fs";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { entitiesIn, lookupForm } from "../src/index/entities.js";
 import { openIndex } from "../src/index/open.js";
-import { tempCorpus, topicPath, writeTopic } from "./support/corpus.js";
+import { createSearch } from "../src/search/search.js";
+import {
+  appendPrompts,
+  corpusEnv,
+  REPO_ROOT,
+  tempCorpus,
+  topicPath,
+  writeTopic,
+} from "./support/corpus.js";
 
 const NY = "America/New_York";
 
@@ -250,4 +260,142 @@ test("an index built before the entities table is rebuilt from markdown on its o
     assert.equal(index.refresh().rebuilt, true);
     assert.equal(entityRows(db).length, 4);
   });
+});
+
+// --- Searching by entity ---
+
+function withSearch(run) {
+  const config = tempCorpus();
+  const search = createSearch(config, { timeZone: NY });
+  try {
+    return run(config, search);
+  } finally {
+    search.close();
+  }
+}
+
+function twoTopicsAboutOneTicket(config) {
+  writeTopic(config, "alarm_tuning", {
+    Context: [
+      "- LIVE-53452 split the alarms out [session:316972f2, 2026-05-12]",
+      "- LIVE-534521 is a different ticket [session:316972f2, 2026-05-12]",
+      "- The alarms page at night [session:316972f2, 2026-05-12]",
+    ],
+  });
+  writeTopic(config, "pipeline_consolidation", {
+    Decisions: [
+      "- Ship LIVE-53452 behind the bake step, commit 4fbfe0a [session:316972f2, 2026-05-13]",
+      "- Docs at w.amazon.com/bin/view/Runbook [session:316972f2, 2026-05-13]",
+    ],
+  });
+}
+
+const textsOf = (section) => section.rows.map((row) => row.text);
+
+test("an entity finds every fact that mentions it, in every topic, and no other", () => {
+  withSearch((config, search) => {
+    twoTopicsAboutOneTicket(config);
+
+    const result = search.search({ entity: "LIVE-53452", mode: "facts" });
+
+    assert.deepEqual(textsOf(result.facts), [
+      "Ship LIVE-53452 behind the bake step, commit 4fbfe0a",
+      "LIVE-53452 split the alarms out",
+    ]);
+  });
+});
+
+test("an entity is matched without regard to case, and a URL with or without its scheme", () => {
+  withSearch((config, search) => {
+    twoTopicsAboutOneTicket(config);
+
+    const found = (entity) => textsOf(search.search({ entity, mode: "facts" }).facts);
+
+    assert.equal(found("live-53452").length, 2);
+    assert.deepEqual(found("4FBFE0A"), ["Ship LIVE-53452 behind the bake step, commit 4fbfe0a"]);
+    assert.deepEqual(found("https://w.amazon.com/bin/view/Runbook/"), [
+      "Docs at w.amazon.com/bin/view/Runbook",
+    ]);
+  });
+});
+
+test("an entity narrows query terms and the other filters rather than replacing them", () => {
+  withSearch((config, search) => {
+    twoTopicsAboutOneTicket(config);
+
+    const withTerms = search.search({ query: "alarms", entity: "LIVE-53452", mode: "facts" });
+    const inOneTopic = search.search({
+      entity: "LIVE-53452",
+      topic: "pipeline_consolidation",
+      mode: "facts",
+    });
+
+    assert.deepEqual(textsOf(withTerms.facts), ["LIVE-53452 split the alarms out"]);
+    assert.deepEqual(textsOf(inOneTopic.facts), [
+      "Ship LIVE-53452 behind the bake step, commit 4fbfe0a",
+    ]);
+  });
+});
+
+test("an entity search returns no prompts rather than every prompt", () => {
+  withSearch((config, search) => {
+    twoTopicsAboutOneTicket(config);
+    appendPrompts(config, [{ display: "what happened on LIVE-53452?" }, { display: "unrelated" }]);
+
+    const result = search.search({ entity: "LIVE-53452" });
+
+    assert.equal(result.facts.rows.length, 2);
+    assert.equal(result.prompts, null);
+  });
+});
+
+test("the search log records the entity searched for", () => {
+  withSearch((config, search) => {
+    twoTopicsAboutOneTicket(config);
+
+    search.search({ entity: "LIVE-53452" });
+
+    const line = JSON.parse(readFileSync(config.searchLogPath, "utf-8").trim());
+    assert.equal(line.entity, "LIVE-53452");
+    assert.equal(line.rows, 2);
+  });
+});
+
+// --- From the command line ---
+
+function runCli(config, args) {
+  const env = corpusEnv(config);
+  delete env.CLAUDE_PROJECT_DIR;
+  return spawnSync(join(REPO_ROOT, "bin", "toc-search"), args, {
+    encoding: "utf-8",
+    timeout: 20_000,
+    env,
+  });
+}
+
+test("--entity on its own is a search, and its results carry the attribution note", () => {
+  const config = tempCorpus();
+  twoTopicsAboutOneTicket(config);
+
+  const result = runCli(config, ["--entity", "live-53452"]);
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /^FACTS {2}2 of 2$/m);
+  assert.equal(result.stdout.includes("LIVE-534521"), false);
+  assert.equal(result.stdout.includes("PROMPTS"), false);
+  assert.match(result.stdout, /dated evidence, not current truth/);
+});
+
+test("--json fact rows carry the entities each fact mentions", () => {
+  const config = tempCorpus();
+  twoTopicsAboutOneTicket(config);
+
+  const parsed = JSON.parse(runCli(config, ["--json", "--entity", "4fbfe0a"]).stdout);
+
+  assert.deepEqual(parsed.facts.rows[0].entities, [
+    { kind: "ticket", value: "LIVE-53452" },
+    { kind: "sha", value: "4fbfe0a" },
+  ]);
+  assert.match(parsed.attribution, /dated evidence, not current truth/);
 });

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { entitiesIn } from "../index/entities.js";
 import { openIndex } from "../index/open.js";
 import { ftsQuery, termsQuery } from "../index/terms.js";
 import { logSearchBestEffort } from "./log.js";
@@ -71,6 +72,8 @@ export function createSearch(
     topic = null,
     section = null,
     session = null,
+    entity = null,
+    withEntities = false,
     source = "explicit",
     allProjects = false,
     log = true,
@@ -86,13 +89,19 @@ export function createSearch(
       topic,
       section,
       session,
+      entity,
     };
 
     const result = { query, mode, facts: null, prompts: null, overview: null, rows: 0 };
     if (mode === "facts" || mode === "both") {
       result.facts = resultClass(query, { ...filters, limit }, index.facts);
+      if (withEntities) {
+        result.facts = { ...result.facts, rows: result.facts.rows.map(withItsEntities) };
+      }
     }
-    if (mode === "prompts" || mode === "both") {
+    // Entities are found in facts only, so an entity search has no prompts to return, rather
+    // than every prompt the other filters allow.
+    if ((mode === "prompts" || mode === "both") && !entity) {
       result.prompts = resultClass(query, { ...filters, limit: promptLimit }, index.prompts);
     }
     if (mode === "overview") {
@@ -108,6 +117,7 @@ export function createSearch(
     if (log) {
       logSearchBestEffort(config, now, {
         query,
+        entity,
         mode,
         rows: result.rows,
         source,
@@ -192,6 +202,12 @@ export function createSearch(
   }
 
   return { refresh, search, sql, quarantined, smoke, close: () => index.close() };
+}
+
+// The patterns refresh stored the entities with, run again on the fact's text: cheaper than a
+// second query, and no different from the table while SCHEMA_VERSION follows the patterns.
+function withItsEntities(row) {
+  return { ...row, entities: entitiesIn(row.text) };
 }
 
 function smokeFailure(result, entry, topics) {

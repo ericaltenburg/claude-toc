@@ -18,6 +18,8 @@ const USAGE = `toc-search [options] [query]
   --all-projects                     undo the scoping an automatic search applies
   --topic ID / --section NAME        scope to one topic or section
   --session ID                       scope to one session
+  --entity VALUE                     facts mentioning a ticket, CR, account, ARN, SHA,
+                                     URL or path, in any case; facts only
   --source automatic|explicit        recorded in the search log; automatic scopes
                                      itself to the current project
   --sql "select ..."                 anything the flags cannot express
@@ -35,11 +37,12 @@ const FLAGS = new Map([
   ["--topic", "topic"],
   ["--section", "section"],
   ["--session", "session"],
+  ["--entity", "entity"],
   ["--source", "source"],
   ["--sql", "sqlText"],
 ]);
 
-const FILTERS = ["date", "since", "until", "project", "topic", "section", "session"];
+const FILTERS = ["date", "since", "until", "project", "topic", "section", "session", "entity"];
 
 export function parseArgs(argv) {
   const options = { mode: "both", words: [] };
@@ -126,7 +129,7 @@ function run(argv) {
       return 2;
     }
 
-    const result = search.search(options);
+    const result = search.search({ ...options, withEntities: Boolean(options.json) });
     return report(options.json ? jsonTextWithAttribution(result) : render(result));
   } finally {
     search.close();
