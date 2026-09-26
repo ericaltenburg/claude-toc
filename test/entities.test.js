@@ -349,6 +349,30 @@ test("an entity search returns no prompts rather than every prompt", () => {
   });
 });
 
+// The marker's session is SHA-shaped here, so it would be found as one if refresh read the
+// line rather than the fact's text.
+test("a superseded fact's entities come from its text, not its marker", () => {
+  withSearch((config, search) => {
+    writeTopic(config, "alarm_tuning", {
+      Context: [
+        "- LIVE-53452 alarms at 5% [session:316972f2, 2026-05-12] [superseded:ef56ab78a, 2026-09-20]",
+        "- LIVE-53452 alarms at 2% [session:ef56ab78, 2026-09-20]",
+      ],
+    });
+
+    const found = search.search({ entity: "LIVE-53452", mode: "facts" }).facts.rows;
+
+    assert.deepEqual(
+      found.map((row) => [row.text, row.superseded_date]),
+      [
+        ["LIVE-53452 alarms at 2%", null],
+        ["LIVE-53452 alarms at 5%", "2026-09-20"],
+      ]
+    );
+    assert.equal(search.search({ entity: "ef56ab78a", mode: "facts" }).facts.rows.length, 0);
+  });
+});
+
 test("the search log records the entity searched for", () => {
   withSearch((config, search) => {
     twoTopicsAboutOneTicket(config);
