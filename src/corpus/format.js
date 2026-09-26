@@ -12,7 +12,7 @@
 // Older lines carry the date alone, `[2026-04-24]`, and a line carrying neither is still a
 // fact, with no session and no date.
 
-export const SECTIONS = ["Context", "Decisions"];
+export const SECTIONS = ["Context", "Decisions", "Gotchas", "Open"];
 
 // A fact carries the first eight characters of its session id, so a fact matches a full
 // session id as a prefix of it.

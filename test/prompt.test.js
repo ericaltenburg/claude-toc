@@ -42,6 +42,27 @@ test("anything that is not a string is dropped from context and decisions", () =
   assert.deepEqual(parsed.decisions, []);
 });
 
+test("gotchas and open items are read from their own arrays, and a reply without them has none", () => {
+  const topic = { id: "brazil", keywords: [], summary: "" };
+  const withBoth = parseModelOutput(
+    JSON.stringify({
+      topic,
+      context: ["uses version sets"],
+      gotchas: ["a stale version set pins the old major silently; merge it first", 7],
+      open: ["whether to move to the new major is undecided"],
+    })
+  );
+  const withNeither = parseModelOutput(JSON.stringify({ topic, context: ["uses version sets"] }));
+
+  assert.deepEqual(withBoth.gotchas, [
+    "a stale version set pins the old major silently; merge it first",
+  ]);
+  assert.deepEqual(withBoth.open, ["whether to move to the new major is undecided"]);
+  assert.deepEqual(withNeither.gotchas, []);
+  assert.deepEqual(withNeither.open, []);
+  assert.deepEqual(withNeither.decisions, []);
+});
+
 // The marker is how a sweep recognises the extractor's own sessions, per ADR 0011, so the
 // prompt has to keep opening with it.
 test("the prompt opens with the marker a sweep looks for", () => {
@@ -84,4 +105,18 @@ test("a decision is a settled outcome, and narrative and working-style preferenc
   assert.doesNotMatch(prompt, /"will /i, "an example that is an intention teaches intentions");
   assert.match(prompt, /record the durable fact itself/);
   assert.match(prompt, /those live in the user's CLAUDE\.md/);
+});
+
+// The same sample found gotchas and root causes were 22% of all facts with no section of their
+// own, and about 11.5% of Decisions were intentions or open items with nowhere else to go.
+test("a gotcha is a real trap, and plans and open questions go to open", () => {
+  const prompt = buildExtractPrompt();
+
+  assert.match(prompt, /"gotchas": \[/);
+  assert.match(prompt, /"open": \[/);
+  assert.match(prompt, /gotchas: a real trap only/);
+  assert.match(prompt, /An error fixed the obvious way is not a gotcha/);
+  assert.match(prompt, /a fact is not a gotcha just because it mentions an error/);
+  assert.match(prompt, /open: plans, intentions, pending items and unanswered questions/);
+  assert.match(prompt, /is not a decision; it goes in open/);
 });

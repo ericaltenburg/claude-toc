@@ -158,6 +158,9 @@ test("a fact line is carried as written and compared by its words alone", () => 
 test("a new topic file carries a heading for each section and no facts", () => {
   const skeleton = newTopicFile("alcs_broadcast_variants");
 
-  assert.equal(skeleton, "# alcs broadcast variants\n\n## Context\n\n## Decisions\n");
+  assert.equal(
+    skeleton,
+    "# alcs broadcast variants\n\n## Context\n\n## Decisions\n\n## Gotchas\n\n## Open\n"
+  );
   assert.deepEqual(parseTopic(skeleton), []);
 });

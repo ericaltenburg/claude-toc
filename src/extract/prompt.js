@@ -17,7 +17,9 @@ Return ONLY valid JSON with this exact schema:
     "summary": "one sentence summary"
   },
   "context": ["durable fact 1", "durable fact 2"],
-  "decisions": ["decision 1", "decision 2"]
+  "decisions": ["decision 1", "decision 2"],
+  "gotchas": ["gotcha 1"],
+  "open": ["open item 1"]
 }
 
 Rules:
@@ -25,8 +27,11 @@ Rules:
 - keywords: words that would appear in future messages about this topic
 - topic.summary: one sentence describing the subject the topic covers: what it is about, stated so it stays true across sessions (e.g. "How ALCS stores and serves broadcast variants"). It never mentions a session, the user, or what was done.
 - context: durable truths learned (e.g. "ALCS uses DynamoDB for broadcast variants")
-- decisions: settled outcomes only: a choice that was made and stands, with its reason when one was stated (e.g. "Chose topic-scoped memory over flat summarization, because flat summaries lost per-subject detail"). A plan, an intention or a pending item is not a decision.
-- context and decisions record what the conversation established, not what happened in it. Session narrative (what was run, committed, created, opened or asked, or who did what) is left out unless it established a durable fact; when it did, record the durable fact itself (e.g. "The deploy role lacks s3:PutObject", not "Ran the deploy and it failed with AccessDenied").
+- decisions: settled outcomes only: a choice that was made and stands, with its reason when one was stated (e.g. "Chose topic-scoped memory over flat summarization, because flat summaries lost per-subject detail"). A plan, an intention or a pending item is not a decision; it goes in open.
+- gotchas: a real trap only: something that failed, or would fail, in a way nobody would expect from reading the code or the docs, stated with its cause or its fix (e.g. "bm25() fails inside an aggregate, a subquery or a CTE, so rank in a flat query over the FTS table"). An error fixed the obvious way is not a gotcha, and a fact is not a gotcha just because it mentions an error.
+- open: plans, intentions, pending items and unanswered questions: anything not settled yet (e.g. "Whether to shard the poller by region is undecided"). They go here and nowhere else.
+- empty sections are omitted or returned as [].
+- context, decisions, gotchas and open record what the conversation established, not what happened in it. Session narrative (what was run, committed, created, opened or asked, or who did what) is left out unless it established a durable fact; when it did, record the durable fact itself (e.g. "The deploy role lacks s3:PutObject", not "Ran the deploy and it failed with AccessDenied").
 - leave out the user's working-style preferences and conventions for the assistant (e.g. "no em dashes"); those live in the user's CLAUDE.md.
 - if the conversation has no meaningful content, return {"skip": true}
 - deduplicate — don't extract things that are essentially the same fact reworded
@@ -115,6 +120,8 @@ function extractionFrom(text) {
     },
     context: stringsOnly(parsed.context),
     decisions: stringsOnly(parsed.decisions),
+    gotchas: stringsOnly(parsed.gotchas),
+    open: stringsOnly(parsed.open),
   };
 }
 

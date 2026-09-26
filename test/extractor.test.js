@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 
+import { parseTopic } from "../src/corpus/format.js";
 import { createExtractor, SAME_SESSION_FACTS_IN_A_PROMPT } from "../src/extract/extractor.js";
 import { createSearch } from "../src/search/search.js";
 import { createStateStore } from "../src/sessions/progress.js";
@@ -109,6 +110,34 @@ test("a session's unread slice becomes facts on the topic the model chose", () =
 
   assert.equal(createStateStore(config).extractionOffset(SESSION), result.offset);
   assert.ok(result.offset > 0);
+});
+
+test("gotchas and open items are filed under sections of their own", () => {
+  const config = corpusWithOneTopic();
+  const model = stubModel([
+    {
+      ...MODEL_OUTPUT,
+      gotchas: ["A variant written without a show id is silently dropped by the reader"],
+      open: ["Whether to replicate variants per region is undecided"],
+    },
+  ]);
+  const extractor = extractorFor(config, model);
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  const sections = parseTopic(readFileSync(topicPath(config, "alcs_broadcast_variants"), "utf-8"))
+    .filter((fact) => fact.session === SESSION.slice(0, 8))
+    .map((fact) => [fact.section, fact.text]);
+  assert.deepEqual(sections, [
+    ["Context", "Broadcast variants are keyed by show id"],
+    ["Decisions", "Will keep DynamoDB for broadcast variants"],
+    ["Gotchas", "A variant written without a show id is silently dropped by the reader"],
+    ["Open", "Whether to replicate variants per region is undecided"],
+  ]);
+  assert.deepEqual([result.gotchas, result.open], [1, 1]);
+  const record = createStateStore(config).processedRecord(SESSION);
+  assert.deepEqual([record.gotchas, record.open], [1, 1]);
 });
 
 const A_WEEK_AGO = Date.parse("2026-08-24T15:00:00Z");

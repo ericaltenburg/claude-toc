@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 
+import { SECTIONS } from "../corpus/format.js";
 import { createTopicStore } from "../corpus/topics.js";
 import { localDateParts } from "../local-time.js";
 import { openIndex } from "../index/open.js";
@@ -113,8 +114,7 @@ export function createExtractor(
       candidates,
       knownFacts: knownFacts.length,
       chunks: chunks.length,
-      context: written.reduce((total, merged) => total + merged.context.length, 0),
-      decisions: written.reduce((total, merged) => total + merged.decisions.length, 0),
+      ...countsBySection(written),
       offset: slice.offset,
     });
   }
@@ -185,11 +185,10 @@ export function createExtractor(
       keywords: merged.topic.keywords,
       summary: merged.topic.summary,
     });
-    for (const fact of merged.context) {
-      topics.appendToTopic(topicId, "Context", fact, sessionId, happenedOn);
-    }
-    for (const decision of merged.decisions) {
-      topics.appendToTopic(topicId, "Decisions", decision, sessionId, happenedOn);
+    for (const section of SECTIONS) {
+      for (const fact of merged[keyOf(section)]) {
+        topics.appendToTopic(topicId, section, fact, sessionId, happenedOn);
+      }
     }
 
     return topicId;
@@ -233,13 +232,22 @@ function normalizedTopicId(id) {
     .replace(/^_+|_+$/g, "");
 }
 
+// The model's reply names each section's facts by the section's name in lower case.
+const keyOf = (section) => section.toLowerCase();
+const KEYS = SECTIONS.map(keyOf);
+const perKey = (valueFor) => Object.fromEntries(KEYS.map((key) => [key, valueFor(key)]));
+const factCount = (merged) => KEYS.reduce((total, key) => total + merged[key].length, 0);
+
 function everythingWritten(written) {
   return {
     topic: written[0].topic,
     topics: written.map((merged) => merged.topic.id),
-    context: written.flatMap((merged) => merged.context),
-    decisions: written.flatMap((merged) => merged.decisions),
+    ...perKey((key) => written.flatMap((merged) => merged[key])),
   };
+}
+
+function countsBySection(written) {
+  return perKey((key) => written.reduce((total, merged) => total + merged[key].length, 0));
 }
 
 function outcome(status, extra = {}) {
@@ -252,19 +260,15 @@ function mergedByTopic(results) {
   for (const result of results.filter((entry) => entry && !entry.skip)) {
     const merged = byTopic.get(result.topic.id) ?? {
       topic: { id: result.topic.id, keywords: [], summary: "" },
-      context: [],
-      decisions: [],
+      ...perKey(() => []),
     };
     merged.topic.keywords = [...new Set([...merged.topic.keywords, ...result.topic.keywords])];
     merged.topic.summary = merged.topic.summary || result.topic.summary;
-    merged.context = distinct([...merged.context, ...result.context]);
-    merged.decisions = distinct([...merged.decisions, ...result.decisions]);
+    for (const key of KEYS) merged[key] = distinct([...merged[key], ...result[key]]);
     byTopic.set(result.topic.id, merged);
   }
 
-  return [...byTopic.values()].sort(
-    (a, b) => b.context.length + b.decisions.length - (a.context.length + a.decisions.length)
-  );
+  return [...byTopic.values()].sort((a, b) => factCount(b) - factCount(a));
 }
 
 function distinct(values) {
