@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseFactLine, parseTopic } from "../src/parse.js";
+import { parseFactLine, parseTopic } from "../src/corpus/format.js";
 
 test("parses a fact carrying a session and a date", () => {
   const fact = parseFactLine("- Project uses Brazil build system [session:316972f2, 2026-05-12]");

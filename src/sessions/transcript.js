@@ -1,6 +1,6 @@
 // Reading a Claude Code transcript. The transcript is a foreign format — Claude Code writes
 // it and this project only ever reads it — so every fact about its shape belongs here, the
-// way parse.js owns the corpus's own format.
+// way corpus/format.js owns the corpus's own format.
 //
 // Two readers, because they read for different things: the extractor takes the unread tail
 // and turns it into turns, and the sweeper peeks at the opening to recognise the extractor's
