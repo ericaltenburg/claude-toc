@@ -16,8 +16,10 @@ const USAGE = `toc-search [options] [query]
   --since / --until YYYY-MM-DD       a local date range
   --project PATH                     scope to one project directory and what is under it
   --all-projects                     undo the scoping an automatic search applies
-  --topic ID / --section NAME        scope to one topic or section
+  --topic ID / --section NAME        scope to one topic or section; facts only
   --session ID                       scope to one session
+  --entity VALUE                     facts mentioning a ticket, CR, account, ARN, SHA,
+                                     URL or path, in any case; facts only
   --source automatic|explicit        recorded in the search log; automatic scopes
                                      itself to the current project
   --sql "select ..."                 anything the flags cannot express
@@ -35,11 +37,12 @@ const FLAGS = new Map([
   ["--topic", "topic"],
   ["--section", "section"],
   ["--session", "session"],
+  ["--entity", "entity"],
   ["--source", "source"],
   ["--sql", "sqlText"],
 ]);
 
-const FILTERS = ["date", "since", "until", "project", "topic", "section", "session"];
+const FILTERS = ["date", "since", "until", "project", "topic", "section", "session", "entity"];
 
 export function parseArgs(argv) {
   const options = { mode: "both", words: [] };
@@ -126,7 +129,7 @@ function run(argv) {
       return 2;
     }
 
-    const result = search.search(options);
+    const result = search.search({ ...options, withEntities: Boolean(options.json) });
     return report(options.json ? jsonTextWithAttribution(result) : render(result));
   } finally {
     search.close();
@@ -167,7 +170,8 @@ function render(result) {
       ...result.facts.rows.map(
         (row, i) =>
           `${pad(i)}. [${row.topic} | ${row.section} | ${row.date ?? "undated"}` +
-          `${row.session ? ` | session ${row.session}` : ""}]\n     ${row.text}`
+          `${row.session ? ` | session ${row.session}` : ""}` +
+          `${row.superseded_date ? ` | superseded ${row.superseded_date}` : ""}]\n     ${row.text}`
       )
     );
   }

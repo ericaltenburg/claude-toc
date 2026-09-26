@@ -5,6 +5,7 @@ import { writeFileAtomically } from "../write-atomically.js";
 import {
   factLine,
   factLinesIn,
+  markSupersededIn,
   newSection,
   newTopicFile,
   sectionBlock,
@@ -68,8 +69,10 @@ export function createTopicStore(config) {
 
   // --- Topic file operations ---
 
+  // Whether the fact was written, which it is not when the topic was never created or the
+  // section already says it.
   function appendToTopic(topicId, section, entry, sessionId, date) {
-    appendFactLine(topicId, section, factLine(entry, sessionId, date), entry);
+    return appendFactLine(topicId, section, factLine(entry, sessionId, date), entry);
   }
 
   // A fact arrives here already written, attribution and all, when merging moves it between
@@ -78,7 +81,7 @@ export function createTopicStore(config) {
   // came from, which is the provenance a fact *is* and the damage ADR 0013 had to repair.
   function appendFactLine(topicId, section, line, factText) {
     const topicFile = topicPath(topicId);
-    if (!existsSync(topicFile)) return;
+    if (!existsSync(topicFile)) return false;
 
     const content = readFileSync(topicFile, "utf-8");
     const block = sectionBlock(content, section);
@@ -86,12 +89,26 @@ export function createTopicStore(config) {
     if (!block) {
       writeFileAtomically(topicFile, content + newSection(section, line));
     } else if (isDuplicateFact(block.text, factText)) {
-      return;
+      return false;
     } else {
       writeFileAtomically(topicFile, content.slice(0, block.end) + line + content.slice(block.end));
     }
 
     recountTocEntry(topicId);
+    return true;
+  }
+
+  // The superseded line is marked and never deleted or reworded (ADR 0019). A topic, section or
+  // text that is no longer there, or a fact already marked, leaves the file untouched.
+  function markSuperseded(topicId, fact, sessionId, date) {
+    const topicFile = topicPath(topicId);
+    if (!existsSync(topicFile)) return false;
+
+    const marked = markSupersededIn(readFileSync(topicFile, "utf-8"), fact, sessionId, date);
+    if (marked === null) return false;
+
+    writeFileAtomically(topicFile, marked);
+    return true;
   }
 
   function recountTocEntry(topicId) {
@@ -215,6 +232,7 @@ export function createTopicStore(config) {
     loadToc,
     upsertTopic,
     appendToTopic,
+    markSuperseded,
     countEntries,
     findSimilarTopic,
     dedupTopics,
@@ -239,10 +257,14 @@ function tombstone(loserPath) {
 // A fact stating a number the existing one lacks is an update, not a rewording. Changing
 // 264,000 to 400,000 leaves the word overlap near 0.9, so without this the corpus would keep
 // the stale value and silently drop the current one.
+//
+// A superseded line is not what the section currently says, so nothing is a duplicate of it: a
+// value that changed and changed back is current again.
 function isDuplicateFact(sectionText, entry) {
   const newWords = normalize(entry);
   const newNumbers = [...numbersIn(entry)];
-  for (const { text: said } of factLinesIn(sectionText)) {
+  for (const { text: said, superseded } of factLinesIn(sectionText)) {
+    if (superseded) continue;
     const saidNumbers = numbersIn(said);
     if (newNumbers.some((number) => !saidNumbers.has(number))) continue;
     if (said.includes(entry.slice(0, 60))) return true;

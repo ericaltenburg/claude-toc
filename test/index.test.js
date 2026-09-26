@@ -115,6 +115,42 @@ test("indexes a fact from the older date-only format with a null session", () =>
   });
 });
 
+test("stores who superseded a fact and when, and nothing for a current one", () => {
+  withCorpus((config, index) => {
+    writeTopic(config, "dispatch", {
+      Context: [
+        "- Batch size is 264,000 [session:316972f2, 2026-05-12] [superseded:ef56ab78, 2026-09-20]",
+        "- Batch size is 400,000 [session:ef56ab78, 2026-09-20]",
+      ],
+    });
+
+    index.refresh();
+
+    assert.deepEqual(
+      index.db
+        .prepare("select text, session, date, superseded_session, superseded_date from facts order by line")
+        .all()
+        .map(plain),
+      [
+        {
+          text: "Batch size is 264,000",
+          session: "316972f2",
+          date: "2026-05-12",
+          superseded_session: "ef56ab78",
+          superseded_date: "2026-09-20",
+        },
+        {
+          text: "Batch size is 400,000",
+          session: "ef56ab78",
+          date: "2026-09-20",
+          superseded_session: null,
+          superseded_date: null,
+        },
+      ]
+    );
+  });
+});
+
 test("retains a fact matching neither format with a null date rather than dropping it", () => {
   withCorpus((config, index) => {
     writeTopic(config, "alarm_tuning", {

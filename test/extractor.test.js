@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 
+import { parseTopic } from "../src/corpus/format.js";
 import { createExtractor, SAME_SESSION_FACTS_IN_A_PROMPT } from "../src/extract/extractor.js";
 import { createSearch } from "../src/search/search.js";
 import { createStateStore } from "../src/sessions/progress.js";
@@ -109,6 +110,34 @@ test("a session's unread slice becomes facts on the topic the model chose", () =
 
   assert.equal(createStateStore(config).extractionOffset(SESSION), result.offset);
   assert.ok(result.offset > 0);
+});
+
+test("gotchas and open items are filed under sections of their own", () => {
+  const config = corpusWithOneTopic();
+  const model = stubModel([
+    {
+      ...MODEL_OUTPUT,
+      gotchas: ["A variant written without a show id is silently dropped by the reader"],
+      open: ["Whether to replicate variants per region is undecided"],
+    },
+  ]);
+  const extractor = extractorFor(config, model);
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  const sections = parseTopic(readFileSync(topicPath(config, "alcs_broadcast_variants"), "utf-8"))
+    .filter((fact) => fact.session === SESSION.slice(0, 8))
+    .map((fact) => [fact.section, fact.text]);
+  assert.deepEqual(sections, [
+    ["Context", "Broadcast variants are keyed by show id"],
+    ["Decisions", "Will keep DynamoDB for broadcast variants"],
+    ["Gotchas", "A variant written without a show id is silently dropped by the reader"],
+    ["Open", "Whether to replicate variants per region is undecided"],
+  ]);
+  assert.deepEqual([result.gotchas, result.open], [1, 1]);
+  const record = createStateStore(config).processedRecord(SESSION);
+  assert.deepEqual([record.gotchas, record.open], [1, 1]);
 });
 
 const A_WEEK_AGO = Date.parse("2026-08-24T15:00:00Z");
@@ -258,15 +287,28 @@ test("the known-facts block is capped at twenty facts", () => {
   extractor.close();
 
   assert.equal(result.knownFacts, 20);
-  const known = model.calls[0].prompt.match(/^- \(alcs_broadcast_variants\//gm) ?? [];
+  const known = model.calls[0].prompt.match(/^\[\d+\] \(alcs_broadcast_variants\//gm) ?? [];
   assert.equal(known.length, 20);
 });
 
 const EARLIER_IN_THIS_SESSION = `session:${SESSION.slice(0, 8)}, 2026-08-20`;
 
+const NUMBERED = /^\[(\d+)\] /;
+
+// Each known fact as "(topic/Section) text", without the number it was listed under.
 function knownFactsIn(prompt) {
   const block = prompt.split("do not repeat these:\n")[1]?.split("\nCONVERSATION:")[0] ?? "";
-  return block.split("\n").filter((line) => line.startsWith("- ("));
+  return block
+    .split("\n")
+    .filter((line) => NUMBERED.test(line))
+    .map((line) => line.replace(NUMBERED, ""));
+}
+
+// The number a prompt listed a known fact under, which is how a reply names what it supersedes.
+function numberOf(prompt, text) {
+  const line = prompt.split("\n").find((listed) => NUMBERED.test(listed) && listed.endsWith(`) ${text}`));
+  assert.ok(line, `"${text}" is not among the known facts`);
+  return Number(NUMBERED.exec(line)[1]);
 }
 
 function knownFactsPromptedFor(config) {
@@ -296,14 +338,14 @@ test("a session's own earlier facts lead the known facts, ahead of the ranked on
   assert.deepEqual(
     known.slice(0, 2).sort(),
     [
-      "- (alcs_broadcast_variants/Context) Broadcast variants are keyed by show id",
-      "- (ingest_lambda/Context) The ingest lambda retries three times",
+      "(alcs_broadcast_variants/Context) Broadcast variants are keyed by show id",
+      "(ingest_lambda/Context) The ingest lambda retries three times",
     ],
     "an earlier slice's facts come first, even one filed under a topic that is not a candidate"
   );
   assert.deepEqual(
     known.slice(2),
-    ["- (alcs_broadcast_variants/Context) Broadcast variants are stored in dynamodb"],
+    ["(alcs_broadcast_variants/Context) Broadcast variants are stored in dynamodb"],
     "a ranked fact the session's own facts already listed is not listed twice"
   );
 });
@@ -319,10 +361,10 @@ test("the same-session facts in a prompt are capped", () => {
 
   const known = knownFactsPromptedFor(config);
 
-  const own = known.filter((line) => line.startsWith("- (earlier_in_this_session/"));
+  const own = known.filter((line) => line.startsWith("(earlier_in_this_session/"));
   assert.equal(own.length, SAME_SESSION_FACTS_IN_A_PROMPT);
   assert.ok(
-    known.some((line) => line.startsWith("- (alcs_broadcast_variants/")),
+    known.some((line) => line.startsWith("(alcs_broadcast_variants/")),
     "the ranked facts still follow a session that hit the cap"
   );
 });
@@ -334,8 +376,118 @@ test("a session with no facts yet is prompted with the ranked facts alone, as be
   });
 
   assert.deepEqual(knownFactsPromptedFor(config).sort(), [
-    "- (alcs_broadcast_variants/Context) Broadcast variants are stored in dynamodb",
-    "- (alcs_broadcast_variants/Decisions) Will use dynamodb for the alcs pipeline",
+    "(alcs_broadcast_variants/Context) Broadcast variants are stored in dynamodb",
+    "(alcs_broadcast_variants/Decisions) Will use dynamodb for the alcs pipeline",
+  ]);
+});
+
+// --- Supersession ---
+
+const OPEN_ITEM = "Whether broadcast variants move off dynamodb is undecided";
+const OPEN_LINE = `- ${OPEN_ITEM} [session:aaaaaaaa, 2026-05-12]`;
+const WHEN_THIS_SESSION_HAPPENED = "2026-08-27";
+
+function corpusWithAnOpenItem() {
+  const config = corpusWithOneTopic();
+  writeTopic(config, "alcs_broadcast_variants", {
+    Context: ["- Broadcast variants are stored in dynamodb [session:aaaaaaaa, 2026-05-12]"],
+    Decisions: ["- Will use dynamodb for the alcs pipeline [session:aaaaaaaa, 2026-05-12]"],
+    Open: [OPEN_LINE],
+  });
+  return config;
+}
+
+function extractWith(config, reply) {
+  const model = stubModel((call) => reply(call.prompt));
+  const extractor = extractorFor(config, model, { timeZone: "UTC" });
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+  return { result, model };
+}
+
+const topicText = (config) => readFileSync(topicPath(config, "alcs_broadcast_variants"), "utf-8");
+
+test("the decision that settles an open item supersedes it, and the item's line is marked, not removed", () => {
+  const config = corpusWithAnOpenItem();
+  const decision = "Chose to keep broadcast variants in dynamodb, because every variant fits one item";
+
+  const { result } = extractWith(config, (prompt) => ({
+    ...MODEL_OUTPUT,
+    decisions: [{ text: decision, supersedes: [numberOf(prompt, OPEN_ITEM)] }],
+  }));
+
+  assert.equal(result.superseded, 1);
+  assert.ok(
+    topicText(config).includes(
+      `\n${OPEN_LINE} [superseded:${SESSION.slice(0, 8)}, ${WHEN_THIS_SESSION_HAPPENED}]\n`
+    ),
+    topicText(config)
+  );
+  const facts = parseTopic(topicText(config));
+  assert.deepEqual(
+    [OPEN_ITEM, decision].map((text) => {
+      const fact = facts.find((candidate) => candidate.text === text);
+      return [fact.section, fact.session, fact.date, fact.superseded];
+    }),
+    [
+      [
+        "Open",
+        "aaaaaaaa",
+        "2026-05-12",
+        { session: SESSION.slice(0, 8), date: WHEN_THIS_SESSION_HAPPENED },
+      ],
+      ["Decisions", SESSION.slice(0, 8), WHEN_THIS_SESSION_HAPPENED, null],
+    ]
+  );
+});
+
+test("a supersedes number that names no known fact is ignored, and the fact is appended as usual", () => {
+  const config = corpusWithAnOpenItem();
+
+  const { result } = extractWith(config, () => ({
+    ...MODEL_OUTPUT,
+    context: [{ text: "Broadcast variants are replicated per region", supersedes: [999, -1, "0"] }],
+  }));
+
+  assert.equal(result.status, "extracted");
+  assert.equal(result.superseded, 0);
+  assert.ok(factsIn(config, "alcs_broadcast_variants").some((line) => line.includes("replicated per region")));
+  assert.equal(topicText(config).includes("[superseded:"), false);
+});
+
+// Marking the old fact is only safe when the new one landed. One the section already holds,
+// reworded, would otherwise leave the value it restates with no current line saying it.
+test("a fact that only restates the one it claims to supersede marks nothing", () => {
+  const config = corpusWithAnOpenItem();
+  const before = topicText(config);
+
+  extractWith(config, (prompt) => ({
+    ...MODEL_OUTPUT,
+    context: [],
+    decisions: [
+      {
+        text: "Will use dynamodb for the alcs pipeline",
+        supersedes: [numberOf(prompt, "Will use dynamodb for the alcs pipeline")],
+      },
+    ],
+  }));
+
+  assert.equal(topicText(config).includes("[superseded:"), false);
+  assert.equal(topicText(config), before);
+});
+
+test("a superseded fact is not offered to the model as one already in memory", () => {
+  const config = corpusWithOneTopic();
+  writeTopic(config, "alcs_broadcast_variants", {
+    Context: [
+      "- Broadcast variants are stored in dynamodb [session:aaaaaaaa, 2026-05-12] [superseded:bbbbbbbb, 2026-06-01]",
+      "- Broadcast variants are stored in s3 [session:bbbbbbbb, 2026-06-01]",
+      `- Broadcast variants are keyed by show id [${EARLIER_IN_THIS_SESSION}] [superseded:bbbbbbbb, 2026-06-01]`,
+    ],
+  });
+
+  assert.deepEqual(knownFactsPromptedFor(config), [
+    "(alcs_broadcast_variants/Context) Broadcast variants are stored in s3",
   ]);
 });
 
@@ -472,6 +624,128 @@ test("a chunk that named a different topic keeps its facts under that topic", ()
     "a chunk's facts must not be filed under a topic it did not name"
   );
   assert.ok(factsIn(config, "alcs_broadcast_variants").some((l) => l.includes("keyed by show id")));
+});
+
+// --- Chunks of one slice ---
+
+const INGEST_LAMBDA = { id: "ingest_lambda", keywords: ["ingest"], summary: "the ingest lambda" };
+
+function corpusWithASliceOfSeveralChunks() {
+  const config = corpusWithOneTopic();
+  appendTranscript(config, SESSION, [
+    { role: "user", text: `then we moved on to the ingest lambda: ${"x".repeat(400)}` },
+    { role: "assistant", text: `the ingest lambda retries three times: ${"y".repeat(400)}` },
+  ]);
+  return config;
+}
+
+// Every chunk of a slice used to get the same prompt, so the second never saw what the first had
+// just returned and wrote it again, reworded.
+test("a later chunk's prompt lists the facts the earlier chunks of the same run returned", () => {
+  const config = corpusWithASliceOfSeveralChunks();
+  const model = stubModel((_call, index) =>
+    index === 0 ? MODEL_OUTPUT : { topic: INGEST_LAMBDA, context: ["The ingest lambda retries three times"] }
+  );
+  const extractor = extractorFor(config, model, { maxChunkChars: 400 });
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.ok(result.chunks > 2, `expected at least three chunks, got ${result.chunks}`);
+  const fromTheFirstChunk = [
+    "(alcs_broadcast_variants/Context) Broadcast variants are keyed by show id",
+    "(alcs_broadcast_variants/Decisions) Will keep DynamoDB for broadcast variants",
+  ];
+  const listed = model.calls.map((call) => knownFactsIn(call.prompt));
+  for (const line of fromTheFirstChunk) {
+    assert.equal(listed[0].includes(line), false, line);
+    assert.ok(listed[1].includes(line), line);
+  }
+  assert.ok(listed[2].includes("(ingest_lambda/Context) The ingest lambda retries three times"));
+});
+
+test("a later chunk can supersede what an earlier chunk of the same run returned", () => {
+  const config = corpusWithASliceOfSeveralChunks();
+  const replaced = "Broadcast variants are keyed by show id";
+  const model = stubModel((call, index) =>
+    index === 0
+      ? MODEL_OUTPUT
+      : {
+          topic: INGEST_LAMBDA,
+          context: [
+            "The ingest lambda retries three times",
+            "The ingest lambda reads variants from a queue",
+            {
+              text: "Broadcast variants are keyed by show id and region",
+              supersedes: [numberOf(call.prompt, replaced)],
+            },
+          ],
+        }
+  );
+  const extractor = extractorFor(config, model, { maxChunkChars: 400, timeZone: "UTC" });
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.equal(result.superseded, 1, "written after its own topic, and still found");
+  const old = parseTopic(readFileSync(topicPath(config, "alcs_broadcast_variants"), "utf-8")).find(
+    (fact) => fact.text === replaced
+  );
+  assert.deepEqual(old.superseded, { session: SESSION.slice(0, 8), date: WHEN_THIS_SESSION_HAPPENED });
+});
+
+// Merging chunks folds the two copies into one fact that names itself as superseded, and it is
+// the one line saying that value.
+test("a later chunk restating an earlier chunk's fact, and claiming to supersede it, marks nothing", () => {
+  const config = corpusWithASliceOfSeveralChunks();
+  const restated = "Broadcast variants are keyed by show id";
+  const model = stubModel((call, index) =>
+    index === 0
+      ? MODEL_OUTPUT
+      : {
+          ...MODEL_OUTPUT,
+          context: [{ text: ` ${restated} `, supersedes: [numberOf(call.prompt, restated)] }],
+          decisions: [],
+        }
+  );
+  const extractor = extractorFor(config, model, { maxChunkChars: 400 });
+
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  assert.equal(result.superseded, 0);
+  assert.equal(topicText(config).includes("[superseded:"), false);
+  assert.equal(factsIn(config, "alcs_broadcast_variants").filter((line) => line.includes(restated)).length, 1);
+});
+
+test("what earlier chunks returned shares the cap on the session's own facts", () => {
+  const config = corpusWithASliceOfSeveralChunks();
+  writeTopic(config, "earlier_in_this_session", {
+    Context: Array.from(
+      { length: SAME_SESSION_FACTS_IN_A_PROMPT + 5 },
+      (_, i) => `- Sourdough note ${i} [${EARLIER_IN_THIS_SESSION}]`
+    ),
+  });
+  const model = stubModel((_call, index) =>
+    index === 0 ? MODEL_OUTPUT : { topic: INGEST_LAMBDA, context: [] }
+  );
+  const extractor = extractorFor(config, model, { maxChunkChars: 400 });
+
+  extractor.extractSession(sessionIn(config));
+  extractor.close();
+
+  const second = knownFactsIn(model.calls[1].prompt);
+  const ownOrThisRun = second.filter(
+    (line) =>
+      line.startsWith("(earlier_in_this_session/") ||
+      line.endsWith("keyed by show id") ||
+      line.endsWith("Will keep DynamoDB for broadcast variants")
+  );
+  assert.equal(ownOrThisRun.length, SAME_SESSION_FACTS_IN_A_PROMPT);
+  assert.deepEqual(second.slice(0, 2).sort(), [
+    "(alcs_broadcast_variants/Context) Broadcast variants are keyed by show id",
+    "(alcs_broadcast_variants/Decisions) Will keep DynamoDB for broadcast variants",
+  ]);
 });
 
 test("a session failing three times is quarantined and surfaced", () => {

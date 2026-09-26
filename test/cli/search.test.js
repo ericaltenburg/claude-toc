@@ -113,6 +113,72 @@ test("a filter with no query terms is a search, not a usage error", () => {
   assert.equal(result.stdout.includes("keyed by show id"), false);
 });
 
+test("--topic and --section return no prompts, since a prompt has neither", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", FACTS);
+  appendPrompts(config, [{ display: "how do variants work again?" }]);
+
+  for (const filter of [["--topic", "broadcast_variants"], ["--section", "Decisions"]]) {
+    const both = run(config, [...filter, "variants"]);
+    const promptsOnly = run(config, ["--prompts", ...filter, "variants"]);
+
+    assert.equal(both.status, 0);
+    assert.match(both.stdout, /^FACTS {2}\d of \d$/m);
+    assert.equal(both.stdout.includes("PROMPTS"), false);
+    assert.match(both.stdout, /dated evidence, not current truth/);
+    assert.equal(promptsOnly.status, 0);
+    assert.equal(promptsOnly.stdout, "no results.\n");
+  }
+});
+
+test("--section Gotchas returns the gotchas alone", () => {
+  const config = tempCorpus();
+  writeTopic(config, "broadcast_variants", {
+    ...FACTS,
+    Gotchas: ["- A variant with no show id is dropped silently [session:316972f2, 2026-05-12]"],
+  });
+
+  const result = run(config, ["--facts", "--section", "Gotchas", "variants"]);
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /^FACTS {2}1 of 1$/m);
+  assert.match(result.stdout, /broadcast_variants \| Gotchas \| 2026-05-12/);
+  assert.match(result.stdout, /dropped silently/);
+});
+
+const SUPERSEDED = {
+  Context: [
+    "- Batch size is 264,000 [session:316972f2, 2026-05-12] [superseded:ef56ab78, 2026-09-20]",
+    "- Batch size is 400,000 [session:ef56ab78, 2026-09-20]",
+  ],
+};
+
+test("a superseded fact is labelled with when it was superseded, in text and in json", () => {
+  const config = tempCorpus();
+  writeTopic(config, "dispatch", SUPERSEDED);
+
+  const text = run(config, ["--facts", "batch"]).stdout;
+  const json = JSON.parse(run(config, ["--facts", "--json", "batch"]).stdout);
+
+  assert.match(
+    text,
+    /1\. \[dispatch \| Context \| 2026-09-20 \| session ef56ab78\]\n {5}Batch size is 400,000\n/
+  );
+  assert.match(
+    text,
+    /2\. \[dispatch \| Context \| 2026-05-12 \| session 316972f2 \| superseded 2026-09-20\]\n {5}Batch size is 264,000\n/
+  );
+  assert.match(text, /dated evidence, not current truth/);
+  assert.deepEqual(
+    json.facts.rows.map((row) => [row.text, row.superseded_session, row.superseded_date]),
+    [
+      ["Batch size is 400,000", null, null],
+      ["Batch size is 264,000", "ef56ab78", "2026-09-20"],
+    ]
+  );
+  assert.match(json.attribution, /dated evidence, not current truth/);
+});
+
 test("a search Claude ran itself scopes to the project it ran in", () => {
   const config = tempCorpus();
   appendPrompts(config, [

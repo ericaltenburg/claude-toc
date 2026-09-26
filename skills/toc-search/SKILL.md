@@ -38,7 +38,8 @@ rebuild anything.
 | `--date`, `--since`, `--until` | local dates, `YYYY-MM-DD` |
 | `--project PATH` | scope to one project directory and what is under it |
 | `--all-projects` | undo the scoping an automatic search applies |
-| `--topic ID`, `--section Decisions`, `--session ID` | narrow to one |
+| `--topic ID`, `--section NAME`, `--session ID` | narrow to one, and `--topic` or `--section` returns no prompts; the sections are `Context`, `Decisions`, `Gotchas`, `Open` |
+| `--entity LIVE-53452` | only facts naming that ticket, CR, account, ARN, SHA, URL or path, in any case, and no prompts. Reach for it with any hyphenated id: query terms split one in two |
 | `--limit N`, `--prompt-limit N` | override the default sizes (`--limit` also caps an overview) |
 | `--source automatic` | your own judgement: logged as such, scoped to the current project |
 | `--sql "select ..."` | anything the above cannot express |
@@ -87,13 +88,18 @@ the same material the root does. `--project PATH` points somewhere else;
 The attribution contract, which is the whole reason results are trustworthy:
 
 - A retrieved fact is **dated evidence, not current truth**. Say "a session on
-  2026-05-12 recorded X", never "X is true". Nothing in this system will ever
-  write "that changed", so a fact about a pinned version stays confident and
-  wrong after the bump.
+  2026-05-12 recorded X", never "X is true". A fact is marked superseded only
+  when a later session changed it where extraction could see both, so an
+  unmarked fact about a pinned version can still be wrong after the bump.
 - Anything load-bearing is checked against the systems of record (the code, the
   config, git, tickets) before it is acted on.
 - Keep a fact's section: **Context** is what was true, **Decisions** is what was
-  chosen. Do not flatten them into one list.
+  chosen, **Gotchas** is a trap with its cause or fix, **Open** is what was still
+  unsettled. Do not flatten them into one list.
+- A fact labelled `superseded YYYY-MM-DD` is history, dated at both ends: "a
+  session on 2026-05-12 recorded X, and a session on 2026-09-20 superseded it".
+  Superseded facts come back after the current ones; the current one is the
+  answer and the superseded one is how it got there.
 - Keep facts and prompts separate. A prompt is raw text the user typed, not a
   distilled fact, and must never be presented as one.
 - Facts record what a session concluded, not world state. Whether the chosen
@@ -107,12 +113,17 @@ for you: filter on `project` yourself when the question is about this project on
 An automatic `--sql` query is logged as unscoped, so the log never claims a bound
 it did not apply. The schema:
 
-- `facts(id, topic, section, text, session, date, line)` — `date` is `YYYY-MM-DD`
-  and may be null.
+- `facts(id, topic, section, text, session, date, line, superseded_session,
+  superseded_date)` — `date` is `YYYY-MM-DD` and may be null; `superseded_date`
+  is null for a current fact.
 - `prompts(id, ts, local_date, local_time, session, project, text, is_command)`.
 - `topics(id, summary, keywords, mtime_ms, size)`.
 - `sessions(session_id, transcript_path, project, started_at, extracted_at, topic,
   extraction_offset)`.
+- `entities(fact_id, kind, value)` — the identifiers a fact mentions, joined on
+  `fact_id = facts.id`. `kind` is `ticket`, `cr`, `account`, `arn`, `sha`, `url`
+  or `path`; `value` compares without regard to case, and a URL is stored
+  without its scheme or a trailing slash.
 - `facts_fts` and `prompts_fts` — external-content FTS5 over `text`, joined on
   `rowid = facts.id` / `prompts.id`, ranked with `bm25(...)`.
 
@@ -131,9 +142,16 @@ toc-search --sql "select topic, count(*) hits, min(date) first, max(date) last
                   from facts where date between '2026-08-24' and '2026-08-28'
                   group by topic order by hits desc"
 
-# Decisions only, newest first.
+# Which tickets and CRs a week touched, from entities(fact_id, kind, value).
+toc-search --sql "select e.kind, e.value, count(*) facts from entities e
+                  join facts f on f.id = e.fact_id
+                  where e.kind in ('ticket', 'cr') and f.date between '2026-08-24' and '2026-08-28'
+                  group by e.kind, e.value order by facts desc"
+
+# Decisions no later session superseded, newest first.
 toc-search --sql "select date, topic, text from facts
-                  where section = 'Decisions' and date >= '2026-07-01'
+                  where section = 'Decisions' and superseded_date is null
+                    and date >= '2026-07-01'
                   order by date desc limit 30"
 ```
 
@@ -152,24 +170,23 @@ say so: that is the signal the list is too narrow.
 
 ## Installing
 
-This skill, the `toc-*` commands and the prompt hook are one plugin, `claude-toc`,
-loaded in place from its repository, so an edit there is live on `/reload-plugins`.
-Merge this into `~/.claude/settings.json`, with `path` set to the repository:
+This skill, the `toc-*` commands and the prompt hook are one plugin, `claude-toc`.
+Register the repository as a marketplace and install from it:
 
-```json
-{
-  "extraKnownMarketplaces": {
-    "claude-toc": {
-      "source": { "source": "directory", "path": "/path/to/claude-toc" }
-    }
-  },
-  "enabledPlugins": { "claude-toc@claude-toc": true },
-  "permissions": { "allow": ["Bash(toc-search:*)"] }
-}
+```sh
+claude plugin marketplace add /path/to/claude-toc
+claude plugin install claude-toc@claude-toc
 ```
 
-The first two register the repository as a marketplace and enable the plugin from
-it. The permission pre-authorises the read path in every turn: this skill's
+Declaring the marketplace in `settings.json` alone does not install it. Installed from
+a local directory the plugin loads in place, so an edit there is live on
+`/reload-plugins`. Then add the permission to `~/.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["Bash(toc-search:*)"] } }
+```
+
+The permission pre-authorises the read path in every turn: this skill's
 `allowed-tools` covers only the turn that invokes it, and an automatic search in a
 later turn would stall on a permission prompt. Run the command bare, as
 `toc-search`, so the rule matches.

@@ -11,7 +11,7 @@ import { parseJsonLine } from "../json-lines.js";
 export function logSearchBestEffort(
   config,
   now,
-  { query, mode, rows, source, project, allProjects, fellBackFrom }
+  { query, entity, mode, rows, source, project, allProjects, fellBackFrom }
 ) {
   try {
     mkdirSync(dirname(config.searchLogPath), { recursive: true });
@@ -20,6 +20,7 @@ export function logSearchBestEffort(
       `${JSON.stringify({
         ts: now().toISOString(),
         query: String(query ?? ""),
+        ...(entity ? { entity } : {}),
         rows,
         mode,
         source,

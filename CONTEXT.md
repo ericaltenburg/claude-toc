@@ -34,20 +34,44 @@ that accumulates without end stops being one subject.
 
 ## Section
 
-A division within a topic file separating the two kinds of fact:
+A division within a topic file separating the four kinds of fact:
 
 - **Context** — what is true about the subject.
 - **Decisions** — what was chosen about the subject. A decision is an outcome, not
   an intention: it is settled and dated at the moment it was reached.
+- **Gotchas** — something that failed, or would fail, in a way nobody would
+  expect, with its cause or its fix. A gotcha is a trap, not any fact that
+  mentions an error.
+- **Open** — what is not settled yet: an intention, a plan, or an open question.
+  An open item closes when the fact or decision that settled it supersedes it.
 
-Preserving this distinction is the differentiator over undifferentiated
+Preserving these distinctions is the differentiator over undifferentiated
 observation stores. A search result carries its fact's section.
 
-Neither section records **world state** — whether a chosen thing was subsequently
+No section records **world state** — whether a chosen thing was subsequently
 built, deployed, or reverted. Facts record what was concluded in a session; the
 systems of record (git, CloudFormation, tickets) hold what was executed. Later
 sessions about the same subject supply newer facts, and their dates are how
 currency is judged.
+
+## Supersession
+
+A later fact **supersedes** an earlier one when it changes the value the earlier
+one stated, reverses its decision, or settles its open item. A different number,
+version, date or qualifier is a supersession, never a duplicate.
+
+The superseded fact is **marked, never deleted or reworded**. Its line keeps its
+own text, session and date, and gains the session and date that superseded it:
+
+```
+- Batch size is 264,000 [session:316972f2, 2026-05-12] [superseded:ef56ab78, 2026-09-20]
+```
+
+A superseded fact is still dated evidence: it records what a session once
+concluded. Search still returns it, after the current facts, and labels it.
+
+Supersession is recorded only when a later extraction saw both the old fact and
+the change, so a fact with no mark is not thereby current.
 
 ## Corpus
 
@@ -61,6 +85,9 @@ re-extracted.
 
 The queryable derivation of the corpus and the prompt log: topics, facts,
 prompts, and sessions in SQLite, with full-text tables over facts and prompts.
+It also holds each fact's **entities**, the hard identifiers it mentions
+(tickets, CRs, accounts, ARNs, SHAs, URLs and paths), found by pattern when the
+fact is indexed, so the markdown never carries them (ADR 0020).
 
 The index is **derived and disposable**. Markdown stays the source of truth, and
 deleting the index costs nothing but the time to rebuild it. Nothing writes a
@@ -106,12 +133,12 @@ fallback is **bad syntax, retried**.
 The **current project** is the repository the session is working in. It is what an
 automatic search means by "this project".
 
-A retrieved fact is **dated evidence, not current truth**. The corpus has no way
-to learn that a fact went stale, because nothing writes "this changed" — a fact
-about a pinned dependency version stays confident and wrong after the bump. So a
-fact is always attributed to its date when used ("a session on 2026-08-27
-recorded X"), never asserted as present tense, and anything load-bearing is
-checked against the systems of record before it is acted on.
+A retrieved fact is **dated evidence, not current truth**. The corpus learns that
+a fact went stale only through supersession, and only when a later session said
+so. Without that, a fact about a pinned dependency version stays confident and
+wrong after the bump. So a fact is always attributed to its date when used ("a
+session on 2026-08-27 recorded X"), never asserted as present tense, and anything
+load-bearing is checked against the systems of record before it is acted on.
 
 ## Extraction
 

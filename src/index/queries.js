@@ -6,6 +6,7 @@ import { realpathSync } from "node:fs";
 import { sep } from "node:path";
 
 import { createStateStore } from "../sessions/progress.js";
+import { lookupForm } from "./entities.js";
 
 // A fact carries only the first eight characters of its session id, so the join from a fact to
 // its session is equality on a computed prefix. Never LIKE, whose wildcards the session field
@@ -13,7 +14,21 @@ import { createStateStore } from "../sessions/progress.js";
 const SESSION_STARTS_WITH_THE_FACTS_PREFIX =
   "substr(s.session_id, 1, length(f.session)) = f.session";
 
-const FACT_COLUMNS = ["f.topic", "f.section", "f.text", "f.session", "f.date", "f.line"];
+const FACT_COLUMNS = [
+  "f.topic",
+  "f.section",
+  "f.text",
+  "f.session",
+  "f.date",
+  "f.line",
+  "f.superseded_session",
+  "f.superseded_date",
+];
+
+// A superseded fact is still evidence of what was once concluded, so it is returned, but only
+// after every current fact the same search found (ADR 0019).
+const CURRENT_FIRST = "(f.superseded_date is not null)";
+
 const PROMPT_COLUMNS = [
   "p.local_date",
   "p.local_time",
@@ -132,14 +147,15 @@ export function createQueries(db, config) {
 
   // --- The extractor's questions ---
 
-  // The facts a session's earlier slices already produced, newest first, wherever they were
-  // filed. A fact's session is a prefix of the full id, matched the same way
+  // The current facts a session's earlier slices already produced, newest first, wherever they
+  // were filed. A fact's session is a prefix of the full id, matched the same way
   // SESSION_STARTS_WITH_THE_FACTS_PREFIX joins the two tables.
   function factsFromSession(sessionId, limit) {
     return db
       .prepare(
         `select id, topic, section, text from facts
           where session is not null and substr(?, 1, length(session)) = session
+            and superseded_date is null
           order by date desc, id desc limit ?`
       )
       .all(sessionId, limit);
@@ -151,7 +167,7 @@ export function createQueries(db, config) {
     return db
       .prepare(
         `select f.id as id, f.topic as topic, f.section as section, f.text as text,
-                bm25(facts_fts) as rank
+                f.superseded_date as superseded_date, bm25(facts_fts) as rank
          from facts_fts join facts f on f.id = facts_fts.rowid
          where facts_fts match ?
          order by bm25(facts_fts), f.date desc limit ?`
@@ -290,7 +306,11 @@ function factBelongsToOneOf(projects) {
       or (f.session is null and s.topic = f.topic)))`;
 }
 
-function factPlan(match, { projects, since, until, topic, section, session }) {
+// The entities table's value compares without regard to case, so this equality does too, and
+// it is answered from the index on value.
+const FACT_CARRIES_THE_ENTITY = "f.id in (select e.fact_id from entities e where e.value = ?)";
+
+function factPlan(match, { projects, since, until, topic, section, session, entity }) {
   const filter = conditions();
   let from = "facts f";
 
@@ -304,12 +324,15 @@ function factPlan(match, { projects, since, until, topic, section, session }) {
   if (section) filter.add("lower(f.section) = lower(?)", section);
   if (session) filter.add("f.session = ?", session);
   if (projects?.length) filter.addAll(factBelongsToOneOf(projects), projects);
+  if (entity) filter.add(FACT_CARRIES_THE_ENTITY, lookupForm(entity));
 
   return {
     from,
     where: filter.where(),
     params: filter.params,
-    order: match ? "bm25(facts_fts), f.date desc" : "f.date desc, f.topic, f.line",
+    order: match
+      ? `${CURRENT_FIRST}, bm25(facts_fts), f.date desc`
+      : `${CURRENT_FIRST}, f.date desc, f.topic, f.line`,
   };
 }
 

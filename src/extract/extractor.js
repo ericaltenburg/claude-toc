@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 
+import { SECTIONS } from "../corpus/format.js";
 import { createTopicStore } from "../corpus/topics.js";
 import { localDateParts } from "../local-time.js";
 import { openIndex } from "../index/open.js";
@@ -71,13 +72,17 @@ export function createExtractor(
       return outcome("nothing-to-extract", { sessionId, offset: slice.offset });
     }
 
-    const { candidates, knownFacts } = promptContextFromAFreshIndex(slice.text, project, sessionId);
-    const prompt = buildExtractPrompt({ candidates, knownFacts });
+    const context = promptContextFromAFreshIndex(slice.text, project, sessionId);
+    const { candidates } = context;
     const chunks = chunkTurns(turns, maxChunkChars);
 
-    let results;
+    const results = [];
     try {
-      results = chunks.map((chunk) => extractChunk(prompt, chunk, sessionId));
+      for (const chunk of chunks) {
+        const knownFacts = knownFactsFor(context, results);
+        const prompt = buildExtractPrompt({ candidates, knownFacts });
+        results.push(withSupersededFactsNamed(extractChunk(prompt, chunk, sessionId), knownFacts));
+      }
     } catch (error) {
       const failure = state.recordFailure(sessionId, error.message);
       return outcome(failure.quarantined ? "quarantined" : "failed", {
@@ -96,10 +101,21 @@ export function createExtractor(
     }
 
     const happenedOn = whenTheConversationHappened(slice, session);
-    const written = extracted.map((merged) => ({
-      ...merged,
-      topic: { ...merged.topic, id: appendToCorpus(merged, sessionId, candidates, happenedOn) },
+    const appended = extracted.map((merged) => ({
+      merged,
+      ...appendToCorpus(merged, sessionId, candidates, happenedOn),
     }));
+    const written = appended.map(({ merged, topicId }) => ({
+      ...merged,
+      topic: { ...merged.topic, id: topicId },
+    }));
+
+    // Only once every fact is written, since a fact can supersede one filed under a topic whose
+    // facts are appended after its own.
+    let superseded = 0;
+    for (const fact of appended.flatMap((entry) => entry.supersedes)) {
+      if (topics.markSuperseded(fact.topic, fact, sessionId, happenedOn)) superseded++;
+    }
 
     state.recordExtraction(sessionId, {
       offset: slice.offset,
@@ -111,10 +127,10 @@ export function createExtractor(
       topic: written[0].topic.id,
       topics: written.map((merged) => merged.topic.id),
       candidates,
-      knownFacts: knownFacts.length,
+      knownFacts: context.ownFacts.length + context.rankedFacts.length,
       chunks: chunks.length,
-      context: written.reduce((total, merged) => total + merged.context.length, 0),
-      decisions: written.reduce((total, merged) => total + merged.decisions.length, 0),
+      ...countsBySection(written),
+      superseded,
       offset: slice.offset,
     });
   }
@@ -136,20 +152,43 @@ export function createExtractor(
   function promptContextFromAFreshIndex(text, project, sessionId) {
     index.refresh();
 
-    const ownFacts = index.factsFromSession(sessionId, SAME_SESSION_FACTS_IN_A_PROMPT);
+    const own = index.factsFromSession(sessionId, SAME_SESSION_FACTS_IN_A_PROMPT);
+    const ownFacts = own.map(asKnownFact);
     const match = salientTermsQuery(text);
-    if (!match) return { candidates: [], knownFacts: ownFacts.map(asKnownFact) };
+    if (!match) return { candidates: [], ownFacts, rankedFacts: [] };
 
     const ranked = index.factsRankedAgainst(match, FACTS_SCANNED_FOR_CANDIDATES);
     const candidates = rankedCandidates(ranked, project);
     const chosen = new Set(candidates.map((candidate) => candidate.topic));
-    const listed = new Set(ownFacts.map((row) => row.id));
-    const knownFacts = [
-      ...ownFacts,
-      ...ranked.filter((row) => chosen.has(row.topic) && !listed.has(row.id)).slice(0, factLimit),
-    ].map(asKnownFact);
+    const listed = new Set(own.map((row) => row.id));
+    // A superseded fact still says what its topic is about, so it counts toward choosing the
+    // candidates, but it is not offered as known: a value that changed back is news again.
+    const rankedFacts = ranked
+      .filter((row) => chosen.has(row.topic) && !listed.has(row.id) && !row.superseded_date)
+      .slice(0, factLimit)
+      .map(asKnownFact);
 
-    return { candidates, knownFacts };
+    return { candidates, ownFacts, rankedFacts };
+  }
+
+  // What the earlier chunks of this run returned is the session's newest, not yet written, so
+  // it leads the session's own facts and shares their cap, newest kept. Each is listed under the
+  // topic its chunk will be written to, which is also where a supersession will look for it.
+  function knownFactsFor({ candidates, ownFacts, rankedFacts }, earlierChunks) {
+    const fromThisRun = earlierChunks
+      .filter((result) => !result.skip)
+      .flatMap((result) => {
+        const topic = resolveTopicId(result.topic.id, candidates);
+        return SECTIONS.flatMap((section) =>
+          result[keyOf(section)].map(({ text }) => ({ topic, section, text }))
+        );
+      })
+      .reverse();
+
+    return [
+      ...[...fromThisRun, ...ownFacts].slice(0, SAME_SESSION_FACTS_IN_A_PROMPT),
+      ...rankedFacts,
+    ];
   }
 
   function rankedCandidates(ranked, project) {
@@ -185,14 +224,21 @@ export function createExtractor(
       keywords: merged.topic.keywords,
       summary: merged.topic.summary,
     });
-    for (const fact of merged.context) {
-      topics.appendToTopic(topicId, "Context", fact, sessionId, happenedOn);
-    }
-    for (const decision of merged.decisions) {
-      topics.appendToTopic(topicId, "Decisions", decision, sessionId, happenedOn);
+    // A fact marks the ones it supersedes only if it landed. One the section already held is a
+    // restatement, and marking what it restates would leave no current line saying it. For the
+    // same reason a fact never marks itself, which it names when a later chunk restated an
+    // earlier chunk's fact and the two were merged into one.
+    const supersedes = [];
+    for (const section of SECTIONS) {
+      for (const fact of merged[keyOf(section)]) {
+        if (!topics.appendToTopic(topicId, section, fact.text, sessionId, happenedOn)) continue;
+        const itself = (old) =>
+          old.topic === topicId && old.section === section && old.text === fact.text;
+        supersedes.push(...fact.supersedes.filter((old) => !itself(old)));
+      }
     }
 
-    return topicId;
+    return { topicId, supersedes };
   }
 
   function whenTheConversationHappened(slice, session) {
@@ -233,17 +279,42 @@ function normalizedTopicId(id) {
     .replace(/^_+|_+$/g, "");
 }
 
+// The model's reply names each section's facts by the section's name in lower case.
+const keyOf = (section) => section.toLowerCase();
+const KEYS = SECTIONS.map(keyOf);
+const perKey = (valueFor) => Object.fromEntries(KEYS.map((key) => [key, valueFor(key)]));
+const factCount = (merged) => KEYS.reduce((total, key) => total + merged[key].length, 0);
+
 function everythingWritten(written) {
   return {
     topic: written[0].topic,
     topics: written.map((merged) => merged.topic.id),
-    context: written.flatMap((merged) => merged.context),
-    decisions: written.flatMap((merged) => merged.decisions),
+    ...perKey((key) => written.flatMap((merged) => merged[key])),
   };
+}
+
+function countsBySection(written) {
+  return perKey((key) => written.reduce((total, merged) => total + merged[key].length, 0));
 }
 
 function outcome(status, extra = {}) {
   return { status, ...extra };
+}
+
+// A reply names what a fact supersedes by its number in the known facts its prompt listed, so the
+// numbers become those facts before the chunk's results meet any other chunk's. A number that
+// names no listed fact is dropped, and the fact is still appended.
+function withSupersededFactsNamed(result, knownFacts) {
+  if (result.skip) return result;
+  return {
+    ...result,
+    ...perKey((key) =>
+      result[key].map(({ text, supersedes }) => ({
+        text,
+        supersedes: supersedes.flatMap((number) => knownFacts[number] ?? []),
+      }))
+    ),
+  };
 }
 
 function mergedByTopic(results) {
@@ -252,22 +323,24 @@ function mergedByTopic(results) {
   for (const result of results.filter((entry) => entry && !entry.skip)) {
     const merged = byTopic.get(result.topic.id) ?? {
       topic: { id: result.topic.id, keywords: [], summary: "" },
-      context: [],
-      decisions: [],
+      ...perKey(() => []),
     };
     merged.topic.keywords = [...new Set([...merged.topic.keywords, ...result.topic.keywords])];
     merged.topic.summary = merged.topic.summary || result.topic.summary;
-    merged.context = distinct([...merged.context, ...result.context]);
-    merged.decisions = distinct([...merged.decisions, ...result.decisions]);
+    for (const key of KEYS) merged[key] = distinct([...merged[key], ...result[key]]);
     byTopic.set(result.topic.id, merged);
   }
 
-  return [...byTopic.values()].sort(
-    (a, b) => b.context.length + b.decisions.length - (a.context.length + a.decisions.length)
-  );
+  return [...byTopic.values()].sort((a, b) => factCount(b) - factCount(a));
 }
 
-function distinct(values) {
-  return [...new Set(values.map((value) => value.trim()))];
+// One entry per text, carrying everything any copy of it superseded.
+function distinct(facts) {
+  const byText = new Map();
+  for (const { text, supersedes } of facts) {
+    const earlier = byText.get(text)?.supersedes ?? [];
+    byText.set(text, { text, supersedes: [...earlier, ...supersedes] });
+  }
+  return [...byText.values()];
 }
 

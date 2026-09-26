@@ -19,7 +19,10 @@ function reportExtraction(session, result) {
 
   if (result.status === "extracted") {
     console.log(`  → topic: ${result.topics.join(", ")}`);
-    console.log(`  → ${result.context} facts, ${result.decisions} decisions`);
+    console.log(
+      `  → ${result.context} facts, ${result.decisions} decisions, ` +
+        `${result.gotchas} gotchas, ${result.open} open, ${result.superseded} superseded`
+    );
     console.log(`  → ${result.candidates.length} candidate topic(s), ${result.chunks} chunk(s)`);
     return;
   }

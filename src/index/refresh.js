@@ -22,6 +22,7 @@ import { parseJsonLine } from "../json-lines.js";
 import { localDateParts } from "../local-time.js";
 import { createStateStore } from "../sessions/progress.js";
 import { parseSessionRecord } from "../sessions/registry.js";
+import { entitiesIn } from "./entities.js";
 
 const PROMPT_OFFSET = "prompt_log_offset";
 const SESSION_OFFSET = "session_log_offset";
@@ -54,8 +55,11 @@ function refreshTopics(db, config) {
   );
   const deleteFacts = db.prepare("delete from facts where topic = ?");
   const insertFact = db.prepare(
-    "insert into facts(topic, section, text, session, date, line) values (?, ?, ?, ?, ?, ?)"
+    `insert into facts(topic, section, text, session, date, line,
+                       superseded_session, superseded_date)
+     values (?, ?, ?, ?, ?, ?, ?, ?)`
   );
+  const insertEntity = db.prepare("insert into entities(fact_id, kind, value) values (?, ?, ?)");
 
   const seen = new Set();
   let parsed = 0;
@@ -79,7 +83,19 @@ function refreshTopics(db, config) {
 
     deleteFacts.run(id);
     for (const fact of parseTopic(readFileSync(path, "utf-8"))) {
-      insertFact.run(id, fact.section, fact.text, fact.session, fact.date, fact.line);
+      const added = insertFact.run(
+        id,
+        fact.section,
+        fact.text,
+        fact.session,
+        fact.date,
+        fact.line,
+        fact.superseded?.session ?? null,
+        fact.superseded?.date ?? null
+      );
+      for (const { kind, value } of entitiesIn(fact.text)) {
+        insertEntity.run(added.lastInsertRowid, kind, value);
+      }
       factsIndexed++;
     }
     parsed++;

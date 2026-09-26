@@ -62,6 +62,8 @@ export function createStateStore(
       summary: result?.topic?.summary ?? null,
       context: result?.context?.length ?? 0,
       decisions: result?.decisions?.length ?? 0,
+      gotchas: result?.gotchas?.length ?? 0,
+      open: result?.open?.length ?? 0,
     };
   }
 

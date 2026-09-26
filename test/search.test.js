@@ -73,6 +73,8 @@ test("a question returns ranked facts, each with its topic, section and date", (
           session: "316972f2",
           date: "2026-05-12",
           line: 8,
+          superseded_session: null,
+          superseded_date: null,
         },
         {
           topic: "broadcast_variants",
@@ -81,9 +83,54 @@ test("a question returns ranked facts, each with its topic, section and date", (
           session: "316972f2",
           date: "2026-05-12",
           line: 4,
+          superseded_session: null,
+          superseded_date: null,
         },
       ]
     );
+  });
+});
+
+// The superseded fact is the shorter one, so bm25 alone would rank it first.
+const SUPERSEDED_AND_CURRENT = {
+  Context: [
+    "- Batch is 264,000 [session:316972f2, 2026-05-12] [superseded:ef56ab78, 2026-09-20]",
+    "- Batch size for the dispatch step is 400,000 rows [session:ef56ab78, 2026-09-20]",
+  ],
+};
+
+test("a superseded fact is still returned, after every current one", () => {
+  withSearch((config, search) => {
+    writeTopic(config, "dispatch", SUPERSEDED_AND_CURRENT);
+
+    const ranked = search.search({ query: "batch", mode: "facts" }).facts.rows;
+    const filtered = search.search({ topic: "dispatch", mode: "facts" }).facts.rows;
+
+    for (const rows of [ranked, filtered]) {
+      assert.deepEqual(
+        rows.map((row) => [row.text, row.superseded_session, row.superseded_date]),
+        [
+          ["Batch size for the dispatch step is 400,000 rows", null, null],
+          ["Batch is 264,000", "ef56ab78", "2026-09-20"],
+        ]
+      );
+    }
+  });
+});
+
+test("a search can be narrowed to the gotchas or the open items", () => {
+  withSearch((config, search) => {
+    writeTopic(config, "broadcast_variants", {
+      ...FACTS,
+      Gotchas: ["- A variant with no show id is dropped silently [session:316972f2, 2026-05-12]"],
+      Open: ["- Whether variants move off DynamoDB is undecided [session:316972f2, 2026-05-12]"],
+    });
+
+    const texts = (section) =>
+      search.search({ query: "variants", mode: "facts", section }).facts.rows.map((row) => row.text);
+
+    assert.deepEqual(texts("Gotchas"), ["A variant with no show id is dropped silently"]);
+    assert.deepEqual(texts("open"), ["Whether variants move off DynamoDB is undecided"]);
   });
 });
 
