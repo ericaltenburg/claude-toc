@@ -63,7 +63,9 @@ The line is found by its section and exact text, never by its line number, becau
 appended since the prompt was built have moved it, and a hand edit or merge may have changed
 the file. A line that is no longer there, or is already marked, is skipped. **A fact marks
 the facts it supersedes only if it landed.** One its section already held is a restatement,
-and marking the fact it restates would leave no current line saying that value.
+and marking the fact it restates would leave no current line saying that value. For the same
+reason a fact never marks itself, which it would when a later chunk restates an earlier chunk's
+fact and the two merge into one.
 
 **Nothing is ever deleted or reworded.** The corpus is irreplaceable and has no backup (ADR
 0001), and the model's judgement that one fact supersedes another is exactly what could be
