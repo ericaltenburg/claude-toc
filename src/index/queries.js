@@ -13,7 +13,20 @@ import { createStateStore } from "../sessions/progress.js";
 const SESSION_STARTS_WITH_THE_FACTS_PREFIX =
   "substr(s.session_id, 1, length(f.session)) = f.session";
 
-const FACT_COLUMNS = ["f.topic", "f.section", "f.text", "f.session", "f.date", "f.line"];
+const FACT_COLUMNS = [
+  "f.topic",
+  "f.section",
+  "f.text",
+  "f.session",
+  "f.date",
+  "f.line",
+  "f.superseded_session",
+  "f.superseded_date",
+];
+
+// A superseded fact is still evidence of what was once concluded, so it is returned, but only
+// after every current fact the same search found (ADR 0019).
+const CURRENT_FIRST = "(f.superseded_date is not null)";
 const PROMPT_COLUMNS = [
   "p.local_date",
   "p.local_time",
@@ -309,7 +322,9 @@ function factPlan(match, { projects, since, until, topic, section, session }) {
     from,
     where: filter.where(),
     params: filter.params,
-    order: match ? "bm25(facts_fts), f.date desc" : "f.date desc, f.topic, f.line",
+    order: match
+      ? `${CURRENT_FIRST}, bm25(facts_fts), f.date desc`
+      : `${CURRENT_FIRST}, f.date desc, f.topic, f.line`,
   };
 }
 

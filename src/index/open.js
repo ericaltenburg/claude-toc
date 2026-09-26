@@ -5,7 +5,7 @@ import { dirname } from "node:path";
 import { createQueries } from "./queries.js";
 import { refreshEverything } from "./refresh.js";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const SCHEMA = `
 create table meta (key text primary key, value text not null);
@@ -25,7 +25,9 @@ create table facts (
   text text not null,
   session text,
   date text,
-  line integer
+  line integer,
+  superseded_session text,
+  superseded_date text
 );
 
 create table prompts (

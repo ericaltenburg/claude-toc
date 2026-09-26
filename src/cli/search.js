@@ -167,7 +167,8 @@ function render(result) {
       ...result.facts.rows.map(
         (row, i) =>
           `${pad(i)}. [${row.topic} | ${row.section} | ${row.date ?? "undated"}` +
-          `${row.session ? ` | session ${row.session}` : ""}]\n     ${row.text}`
+          `${row.session ? ` | session ${row.session}` : ""}` +
+          `${row.superseded_date ? ` | superseded ${row.superseded_date}` : ""}]\n     ${row.text}`
       )
     );
   }

@@ -54,7 +54,8 @@ function refreshTopics(db, config) {
   );
   const deleteFacts = db.prepare("delete from facts where topic = ?");
   const insertFact = db.prepare(
-    "insert into facts(topic, section, text, session, date, line) values (?, ?, ?, ?, ?, ?)"
+    `insert into facts(topic, section, text, session, date, line, superseded_session, superseded_date)
+     values (?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
   const seen = new Set();
@@ -79,7 +80,16 @@ function refreshTopics(db, config) {
 
     deleteFacts.run(id);
     for (const fact of parseTopic(readFileSync(path, "utf-8"))) {
-      insertFact.run(id, fact.section, fact.text, fact.session, fact.date, fact.line);
+      insertFact.run(
+        id,
+        fact.section,
+        fact.text,
+        fact.session,
+        fact.date,
+        fact.line,
+        fact.superseded?.session ?? null,
+        fact.superseded?.date ?? null
+      );
       factsIndexed++;
     }
     parsed++;
