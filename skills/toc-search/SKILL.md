@@ -39,6 +39,7 @@ rebuild anything.
 | `--project PATH` | scope to one project directory and what is under it |
 | `--all-projects` | undo the scoping an automatic search applies |
 | `--topic ID`, `--section NAME`, `--session ID` | narrow to one; the sections are `Context`, `Decisions`, `Gotchas`, `Open` |
+| `--entity LIVE-53452` | only facts naming that ticket, CR, account, ARN, SHA, URL or path, in any case, and no prompts. Reach for it with any hyphenated id: query terms split one in two |
 | `--limit N`, `--prompt-limit N` | override the default sizes (`--limit` also caps an overview) |
 | `--source automatic` | your own judgement: logged as such, scoped to the current project |
 | `--sql "select ..."` | anything the above cannot express |
@@ -136,6 +137,12 @@ toc-search --sql "select local_time, project, text from prompts
 toc-search --sql "select topic, count(*) hits, min(date) first, max(date) last
                   from facts where date between '2026-08-24' and '2026-08-28'
                   group by topic order by hits desc"
+
+# Which tickets and CRs a week touched, from entities(fact_id, kind, value).
+toc-search --sql "select e.kind, e.value, count(*) facts from entities e
+                  join facts f on f.id = e.fact_id
+                  where e.kind in ('ticket', 'cr') and f.date between '2026-08-24' and '2026-08-28'
+                  group by e.kind, e.value order by facts desc"
 
 # Decisions no later session superseded, newest first.
 toc-search --sql "select date, topic, text from facts
