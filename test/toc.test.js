@@ -1,27 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createConfig } from "../src/config.js";
 import { createTopicStore } from "../src/toc.js";
 import { parseTopic } from "../src/parse.js";
-import { tempCorpus, topicPath } from "./support/corpus.js";
+import { EXTRACTOR, runCli, tempCorpus, topicPath } from "./support/corpus.js";
 
 const A_SESSION = "316972f2-1111-2222-3333-444455556666";
 const HAPPENED_ON = "2026-08-27";
+const ANOTHER_SESSION = "9b1e4c07-aaaa-bbbb-cccc-ddddeeeeffff";
+const AN_EARLIER_DAY = "2026-07-14";
 
-function storeWith(topics) {
-  const config = tempCorpus();
+function storeWith(topics, config = tempCorpus()) {
   const store = createTopicStore(config);
 
-  for (const [id, { keywords = [], summary = "", context = [], decisions = [] }] of Object.entries(
-    topics
-  )) {
+  for (const [
+    id,
+    { keywords = [], summary = "", context = [], decisions = [], session = A_SESSION, date = HAPPENED_ON },
+  ] of Object.entries(topics)) {
     store.upsertTopic(id, { keywords, summary });
-    for (const fact of context) store.appendToTopic(id, "Context", fact, A_SESSION, HAPPENED_ON);
-    for (const fact of decisions) {
-      store.appendToTopic(id, "Decisions", fact, A_SESSION, HAPPENED_ON);
-    }
+    for (const fact of context) store.appendToTopic(id, "Context", fact, session, date);
+    for (const fact of decisions) store.appendToTopic(id, "Decisions", fact, session, date);
   }
 
   return { config, store };
@@ -86,8 +88,60 @@ test("a fact reworded past the similarity threshold is not appended twice", () =
   ]);
 });
 
-test("the TOC counts the facts a topic holds", () => {
+// The extractor is a detached process that can be killed mid-write, and the corpus has no
+// backup (ADR 0001). A file replaced by a rename is whole before it or whole after it, where
+// one rewritten in place can be left truncated, and it gets a new inode where that one keeps
+// its own.
+test("an append replaces the topic file and the TOC whole, and leaves no temp file behind", () => {
+  const { config, store } = storeWith({ brazil: { context: ["uses version sets"] } });
+  const topicInode = statSync(topicPath(config, "brazil")).ino;
+  const tocInode = statSync(config.tocPath).ino;
+
+  store.appendToTopic("brazil", "Context", "pins the major version", A_SESSION, HAPPENED_ON);
+
+  assert.notEqual(statSync(topicPath(config, "brazil")).ino, topicInode);
+  assert.notEqual(statSync(config.tocPath).ino, tocInode);
+  assert.deepEqual(readdirSync(config.topicsDir), ["brazil.md"]);
+  assert.deepEqual(readdirSync(config.corpusDir).sort(), ["toc.json", "topics"]);
+  assert.deepEqual(textsIn(config, "brazil"), ["uses version sets", "pins the major version"]);
+  assert.equal(store.loadToc().topics.brazil.entries, 2);
+});
+
+const batchCap = (rows, minutes = 25) =>
+  `The dispatch step caps executionBatchSize at ${rows} rows per batch, which binds once ` +
+  `dispatch duration drifts past ${minutes} minutes`;
+const shardLimit = (records) =>
+  `A shard accepts ${records} records an hour before it throttles writes from the producer fleet`;
+
+// One changed number barely moves the word overlap, so an update scored as a rewording of the
+// fact it corrects, and the corpus kept only the stale value.
+test("a fact that changes a number is kept beside the fact it updates", () => {
+  const { config, store } = storeWith({ dispatch: { context: [batchCap("264,000")] } });
+
+  store.appendToTopic("dispatch", "Context", batchCap("400,000"), A_SESSION, HAPPENED_ON);
+  store.appendToTopic("dispatch", "Context", batchCap("264,000", 40), A_SESSION, HAPPENED_ON);
+
+  assert.deepEqual(textsIn(config, "dispatch"), [
+    batchCap("264,000"),
+    batchCap("400,000"),
+    batchCap("264,000", 40),
+  ]);
+});
+
+test("a number written another way is the same number, so the fact is still a duplicate", () => {
   const { config, store } = storeWith({
+    dispatch: { context: [batchCap("264,000"), shardLimit("1.5M")] },
+  });
+
+  for (const rewritten of [batchCap("264k"), batchCap("264000"), shardLimit("1,500,000")]) {
+    store.appendToTopic("dispatch", "Context", rewritten, A_SESSION, HAPPENED_ON);
+  }
+
+  assert.deepEqual(textsIn(config, "dispatch"), [batchCap("264,000"), shardLimit("1.5M")]);
+});
+
+test("the TOC counts the facts a topic holds", () => {
+  const { store } = storeWith({
     brazil: { summary: "the build system", context: ["a", "b"], decisions: ["c"] },
   });
 
@@ -116,7 +170,7 @@ test("a topic is similar when its keywords and its id overlap enough", () => {
     brazil_build_system: { keywords: ["brazil", "build", "versionset"] },
   });
 
-  const match = store.findSimilarTopic("brazil_build_system", ["brazil", "build", "versionset"]);
+  const match = store.findSimilarTopic("brazil_build_systems", ["brazil", "build", "versionset"]);
   const unrelated = store.findSimilarTopic("kinesis_streams", ["kinesis", "shards"]);
 
   assert.equal(match?.id, "brazil_build_system");
@@ -128,14 +182,8 @@ test("a topic is similar when its keywords and its id overlap enough", () => {
 
 // pickMergeWinner and mergeTopics are private, so dedup is the only way in: these exercise
 // merging exactly as `toc-extract --dedup` does.
-//
-// THESE THREE ARE SKIPPED BECAUSE MERGING IS BROKEN, NOT BECAUSE IT IS UNIMPORTANT.
-// findSimilarTopic scans every topic including the candidate itself, which scores 1.00, so
-// dedupTopics' `match.id !== ids[i]` guard always continues and no pair can ever merge. The
-// last test in this file pins that as today's behaviour; unskip these three when it is fixed.
-const MERGING_IS_BROKEN = { skip: "findSimilarTopic matches the candidate against itself" };
 
-test("dedup merges a similar pair, moving the loser's facts to the winner", MERGING_IS_BROKEN, () => {
+test("dedup merges a similar pair, moving the loser's facts to the winner", () => {
   const { config, store } = storeWith({
     brazil_build_system: { keywords: ["brazil", "build", "versionset"], context: ["uses version sets", "resolves deps"] },
     brazil_build_systems: { keywords: ["brazil", "build", "versionset"], context: ["has a Config file"] },
@@ -152,7 +200,7 @@ test("dedup merges a similar pair, moving the loser's facts to the winner", MERG
   ]);
 });
 
-test("the topic holding more facts wins, and the loser leaves a tombstone and the TOC", MERGING_IS_BROKEN, () => {
+test("the topic holding more facts wins, and the loser leaves a tombstone and the TOC", () => {
   const { config, store } = storeWith({
     brazil_build_system: { keywords: ["brazil", "build"], context: ["a", "b"] },
     brazil_build_systems: { keywords: ["brazil", "build"], context: ["c"] },
@@ -168,11 +216,18 @@ test("the topic holding more facts wins, and the loser leaves a tombstone and th
   assert.equal("brazil_build_systems" in store.loadToc().topics, false);
 });
 
-test("the winner keeps the union of both keyword sets and the longer summary", MERGING_IS_BROKEN, () => {
+// The keyword sets overlap without being equal, because a pair has to clear the similarity
+// threshold before there is any union to keep: keywords carry 0.7 of the score, so two topics
+// sharing no keyword score 0.15 on their ids alone and never meet.
+test("the winner keeps the union of both keyword sets and the longer summary", () => {
   const { store } = storeWith({
-    brazil_build_system: { keywords: ["brazil"], summary: "short", context: ["a", "b"] },
+    brazil_build_system: {
+      keywords: ["brazil", "build", "versionset"],
+      summary: "short",
+      context: ["a", "b"],
+    },
     brazil_build_systems: {
-      keywords: ["build"],
+      keywords: ["brazil", "build", "versionset", "config"],
       summary: "a considerably longer summary of the same subject",
       context: ["c"],
     },
@@ -181,7 +236,7 @@ test("the winner keeps the union of both keyword sets and the longer summary", M
   store.dedupTopics();
 
   const winner = store.loadToc().topics.brazil_build_system;
-  assert.deepEqual(winner.keywords.sort(), ["brazil", "build"]);
+  assert.deepEqual(winner.keywords.sort(), ["brazil", "build", "config", "versionset"]);
   assert.equal(winner.summary, "a considerably longer summary of the same subject");
   assert.equal(winner.entries, 3);
 });
@@ -211,15 +266,73 @@ test("dedup over topics that resemble nothing merges nothing", () => {
   assert.equal(remaining, 2);
 });
 
-// The defect the three skipped tests above are waiting on. Delete this when merging works.
-test("dedup merges nothing today, because every topic best-matches itself", () => {
-  const { store } = storeWith({
+// A fact's session and date are its provenance (ADR 0013), so a merge that restamped them
+// would corrupt the corpus while looking like it tidied it.
+test("the facts a merge moves keep their own session and date, and a second dedup changes nothing", () => {
+  const { config, store } = storeWith({
+    brazil_build_system: { keywords: ["brazil", "build", "versionset"], context: ["a", "b"] },
+    brazil_build_systems: {
+      keywords: ["brazil", "build", "versionset"],
+      context: ["has a Config file"],
+      session: ANOTHER_SESSION,
+      date: AN_EARLIER_DAY,
+    },
+  });
+
+  store.dedupTopics({ apply: true });
+  const winnerFile = readFileSync(topicPath(config, "brazil_build_system"), "utf-8");
+  const toc = store.loadToc();
+  const again = store.dedupTopics({ apply: true });
+
+  const moved = parseTopic(winnerFile).find((fact) => fact.text === "has a Config file");
+  assert.equal(moved.session, ANOTHER_SESSION.slice(0, 8));
+  assert.equal(moved.date, AN_EARLIER_DAY);
+  assert.deepEqual(again.merges, []);
+  assert.equal(readFileSync(topicPath(config, "brazil_build_system"), "utf-8"), winnerFile);
+  assert.deepEqual(store.loadToc(), toc);
+});
+
+test("a tombstone renames the topic file's own extension, not an earlier .md in its path", () => {
+  const underADotMdDirectory = createConfig(
+    { corpusDir: join(mkdtempSync(join(tmpdir(), "claude-toc-")), "notes.md") },
+    {}
+  );
+  const { config, store } = storeWith(
+    {
+      brazil_build_system: { keywords: ["brazil", "build"], context: ["a", "b"] },
+      brazil_build_systems: { keywords: ["brazil", "build"], context: ["c"] },
+    },
+    underADotMdDirectory
+  );
+
+  store.dedupTopics({ apply: true });
+
+  assert.deepEqual(readdirSync(config.topicsDir).sort(), [
+    "brazil_build_system.md",
+    "brazil_build_systems.merged.md",
+  ]);
+});
+
+// The corpus has no backup (ADR 0001), so the command that merges it only says what it would
+// do until it is told otherwise.
+test("toc-extract --dedup prints the plan and changes nothing, and --apply carries it out", () => {
+  const { config, store } = storeWith({
     brazil_build_system: { keywords: ["brazil", "build", "versionset"], context: ["a", "b"] },
     brazil_build_systems: { keywords: ["brazil", "build", "versionset"], context: ["c"] },
   });
+  const topicFiles = readdirSync(config.topicsDir).sort();
 
-  const itself = store.findSimilarTopic("brazil_build_systems", ["brazil", "build", "versionset"]);
+  const plan = runCli(EXTRACTOR, { args: ["--dedup"], config });
 
-  assert.equal(itself.id, "brazil_build_systems");
-  assert.deepEqual(store.dedupTopics(), { merges: [], remaining: 2 });
+  assert.equal(plan.stderr, "");
+  assert.match(plan.stdout, /brazil_build_systems into brazil_build_system \(score: 0\.85\)/);
+  assert.match(plan.stdout, /rerun with --apply/i);
+  assert.deepEqual(readdirSync(config.topicsDir).sort(), topicFiles);
+  assert.equal(Object.keys(store.loadToc().topics).length, 2);
+
+  const applied = runCli(EXTRACTOR, { args: ["--dedup", "--apply"], config });
+
+  assert.equal(applied.stderr, "");
+  assert.match(applied.stdout, /Merged brazil_build_systems into brazil_build_system/);
+  assert.deepEqual(Object.keys(store.loadToc().topics), ["brazil_build_system"]);
 });

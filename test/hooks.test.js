@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { createStateStore } from "../src/state.js";
+import { createExtractionLock } from "../src/extraction-lock.js";
 import {
   fakeExtractor,
   idleFor,
@@ -61,7 +61,6 @@ test("toc-logger indexes a session once, without a per-turn counter file", () =>
   assert.equal(entry.cwd, "/some/project");
 
   assert.equal(existsSync(join(config.corpusDir, ".analyzing")), false);
-  assert.equal(existsSync(config.legacyProcessedPath), false);
   assert.deepEqual(
     readdirSync(config.corpusDir).filter((f) => f.startsWith(".turns-")),
     []
@@ -130,7 +129,7 @@ test("submitting a prompt sweeps an idle session in a detached extractor", () =>
   assert.equal(result.stdout, "");
   assert.equal(result.stderr, "");
   assert.deepEqual(spawns(spawnLog), [`${realpathSync(config.extractorDir)} --sweep`]);
-  assert.ok(createStateStore(config).load().extraction, "the extraction lock is held");
+  assert.ok(createExtractionLock(config).held(), "the extraction lock is held");
 });
 
 test("a second prompt inside the debounce window sweeps nothing", () => {
@@ -141,9 +140,8 @@ test("a second prompt inside the debounce window sweeps nothing", () => {
   sweepWith(config, { spawnsRecordedIn: spawnLog });
   assert.equal(spawns(spawnLog).length, 1);
 
-  createStateStore(config).releaseExtraction(
-    createStateStore(config).load().extraction.holder
-  );
+  const lock = createExtractionLock(config);
+  lock.release(lock.held().holder);
   sweepWith(config, { spawnsRecordedIn: spawnLog });
 
   assert.equal(spawns(spawnLog).length, 1, "the second sweep was debounced");
@@ -153,7 +151,7 @@ test("a sweep does not overlap an extraction already running", () => {
   const config = tempCorpus();
   sweepable(config);
   const spawnLog = spawnLogFor(config);
-  createStateStore(config).acquireExtraction("dddddddd-1111-2222-3333-444455556666");
+  createExtractionLock(config).acquire("dddddddd-1111-2222-3333-444455556666");
 
   sweepWith(config, { spawnsRecordedIn: spawnLog });
 
@@ -170,7 +168,7 @@ test("a sweep with nothing idle spawns nothing", () => {
   sweepWith(config, { spawnsRecordedIn: spawnLog });
 
   assert.equal(whatSpawnedWithinAMoment(spawnLog), "");
-  assert.equal(createStateStore(config).load().extraction, null);
+  assert.equal(createExtractionLock(config).held(), null);
 });
 
 test("a sweep whose transcripts directory is unreadable still exits zero and says nothing", () => {

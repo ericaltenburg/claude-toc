@@ -84,6 +84,7 @@ is the snapshot taken first, and can be deleted once the dates look right.
 - The extraction lease is held by a **holder** rather than a session id, since a sweep
   takes it under an identifier no session has yet. Lease renewal was removed with the
   backfill: nothing left holds the lease longer than its five minutes.
+  Superseded by ADR 0016: extractions did outlast it, and the lease is renewed again.
 - Redoing this — a new machine, a restored corpus, a long-broken hook — means rewriting
   it. The measurements above are what make that cheap: the queue is every idle unread
   transcript whose first record is not the extraction prompt, newest first, and it costs

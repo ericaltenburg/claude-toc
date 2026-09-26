@@ -12,7 +12,8 @@ import {
 import { renderStatus } from "../src/cli/status.js";
 import { SOURCES } from "../src/search.js";
 import { createSpendLog } from "../src/spend.js";
-import { createStateStore, EXTRACTION_LEASE_MS } from "../src/state.js";
+import { createExtractionLock, EXTRACTION_LOCK_IS_STALE_AFTER_MS } from "../src/extraction-lock.js";
+import { createStateStore } from "../src/state.js";
 import { SESSION_IS_IDLE_AFTER_MS } from "../src/sweep.js";
 import { EXTRACTION_PROMPT_MARKER } from "../src/extract-prompt.js";
 import {
@@ -435,6 +436,27 @@ test("extraction figures come from the recorded state", () => {
   assert.notEqual(rowValue(report, "last extraction"), "never");
 });
 
+test("an extraction in flight is read from the lock file", () => {
+  const config = tempCorpus();
+  createExtractionLock(config).acquire("sweep-316972f2");
+
+  const report = createStatusReport(config, { timeZone: NEW_YORK }).read();
+
+  assert.match(rowValue(report, "extracting now"), /^yes \(started \d+s ago\)$/);
+});
+
+test("a lock nothing renewed expires from its last renewal, and names its holder", () => {
+  const config = tempCorpus();
+  createExtractionLock(config).acquire("sweep-316972f2");
+  idleFor(config.extractionLockPath, EXTRACTION_LOCK_IS_STALE_AFTER_MS + 15 * A_MINUTE);
+
+  const report = createStatusReport(config, { timeZone: NEW_YORK }).read();
+
+  assert.deepEqual(report.verdict.problems, [
+    "lease held by sweep-316972f2 expired 15m ago with no extraction since",
+  ]);
+});
+
 test("the staleness threshold reaches the verdict through the gathering seam", () => {
   const config = tempCorpus();
   idleSessionWithUnreadTurns(config, "316972f2-1111-2222-3333-444455556666");
@@ -838,8 +860,14 @@ test("reading the status leaves the search log exactly as the read path wrote it
   assert.equal(readFileSync(config.searchLogPath, "utf-8"), before);
 });
 
+// This one dates its searches from the real clock, unlike its summarize* neighbours above.
+// runCli spawns the command in its own process, so there is no seam to inject a clock
+// through: the CLI reads Date.now(). A fixed date passes on the day it is written and fails
+// once real time leaves the window behind — this test pinned 2026-08-27 and started failing
+// on 2026-09-03, reporting 0 in the 7d column. Yesterday is inside every window the report
+// prints, so the assertions below hold on any day they are run.
 test("toc-status prints the search block as a table with a header row per window", () => {
-  const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
+  const now = Date.now() - A_DAY;
   const config = tempCorpus();
   appendSearches(config, [
     searched({ at: now, source: "automatic" }),

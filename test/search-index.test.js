@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { appendFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 
 import { openIndex, SCHEMA_VERSION } from "../src/search-index.js";
@@ -502,6 +504,53 @@ test("deleting the index and rebuilding it produces an equivalent index", () => 
     assert.deepEqual(dump(second), before);
   } finally {
     second.close();
+  }
+});
+
+// --- Another process writing ---
+
+const HOLD_THE_WRITE_LOCK = `
+const { writeSync } = require("node:fs");
+const { DatabaseSync } = require("node:sqlite");
+const [indexPath, holdForMs] = process.argv.slice(1);
+const db = new DatabaseSync(indexPath);
+db.exec("begin immediate");
+db.exec("insert into meta(key, value) values ('written_by', 'another process')");
+writeSync(1, "holding\\n");
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(holdForMs));
+db.exec("commit");
+`;
+
+function anotherProcessHoldingTheWriteLock(config, { forMs }) {
+  const holder = spawn(
+    process.execPath,
+    ["--disable-warning=ExperimentalWarning", "-e", HOLD_THE_WRITE_LOCK, config.indexPath, String(forMs)],
+    { stdio: ["ignore", "pipe", "inherit"] }
+  );
+  const exited = once(holder, "exit").then(([code]) => code);
+  const holding = Promise.race([
+    once(holder.stdout, "data"),
+    exited.then((code) => {
+      throw new Error(`the lock holder exited with ${code} before it held the lock`);
+    }),
+  ]);
+  return { holding, exited };
+}
+
+test("a refresh waits for another process's write transaction instead of failing", async () => {
+  const config = tempCorpus();
+  writeTopic(config, "alarm_tuning", { Context: ["- Catch-all alarm is noisy [2026-04-24]"] });
+  const index = indexOf(config);
+  try {
+    const other = anotherProcessHoldingTheWriteLock(config, { forMs: 300 });
+    await other.holding;
+
+    index.refresh();
+
+    assert.equal(index.db.prepare("select count(*) c from facts").get().c, 1);
+    assert.equal(await other.exited, 0);
+  } finally {
+    index.close();
   }
 });
 

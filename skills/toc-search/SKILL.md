@@ -17,8 +17,13 @@ change.
 ## Run it
 
 ```sh
-$CLAUDE_TOC_HOME/bin/toc-search [options] <query terms>
+$CLAUDE_TOC_HOME/bin/toc-search --source automatic [options] <query terms>
 ```
+
+Every search carries `--source automatic` unless the user asked for it in the
+current turn: they typed `/toc-search` (its command block is in the conversation),
+or they directly asked you to search memory. Only then drop the flag, so the
+search is logged `explicit`. Every other search is on your own judgement.
 
 Refresh runs before every query, so results are never stale and you never need to
 rebuild anything.
@@ -55,11 +60,10 @@ speculation:
 - Work begins on a named service or repository.
 - The question is explicitly temporal: yesterday, last week, "when did we".
 
-Pass `--source automatic` on every search you run on your own judgement. That is
-the whole contract: the command then scopes the search to the current project
-itself, so unrelated work cannot bleed into the conversation, and records the
-scope in the log. A search the user asks for is unscoped, because cross-project
-questions are exactly the ones a person types by hand.
+An automatic search scopes itself to the current project, so unrelated work
+cannot bleed into the conversation, and records the scope in the log. A search
+the user asks for is unscoped, because cross-project questions are exactly the
+ones a person types by hand.
 
 The current project is the repository you are working in, so a subdirectory finds
 the same material the root does. `--project PATH` points somewhere else;
@@ -95,8 +99,8 @@ The attribution contract, which is the whole reason results are trustworthy:
 
 ## Writing SQL
 
-`--sql` takes any single `select` or `with` statement; writes are refused. Pass
-`--source automatic` here too, but note that nothing scopes a hand-written query
+`--sql` takes any single `select` or `with` statement; writes are refused.
+`--source` follows the same rule here, but nothing scopes a hand-written query
 for you: filter on `project` yourself when the question is about this project only.
 An automatic `--sql` query is logged as unscoped, so the log never claims a bound
 it did not apply. The schema:

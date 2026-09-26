@@ -1,7 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "fs";
 
 const STATE_VERSION = 1;
-export const EXTRACTION_LEASE_MS = 300_000;
 export const SWEEP_DEBOUNCE_MS = 60_000;
 export const ATTEMPTS_BEFORE_QUARANTINE = 3;
 export const START_OF_TRANSCRIPT = 0;
@@ -16,21 +15,16 @@ const EMPTY = () => ({
   offsets: {},
   failures: {},
   quarantined: {},
-  extraction: null,
   extractorSessions: {},
   sweptAt: null,
 });
 
 export function createStateStore(
   config,
-  {
-    leaseMs = EXTRACTION_LEASE_MS,
-    debounceMs = SWEEP_DEBOUNCE_MS,
-    attemptsBeforeQuarantine = ATTEMPTS_BEFORE_QUARANTINE,
-  } = {}
+  { debounceMs = SWEEP_DEBOUNCE_MS, attemptsBeforeQuarantine = ATTEMPTS_BEFORE_QUARANTINE } = {}
 ) {
-  let owned = null;
-
+  // A state file written before ADR 0016 still carries an `extraction` lease. Only the fields
+  // named here are read, so it is dropped on load and gone after the next save.
   function load() {
     if (existsSync(config.statePath)) {
       try {
@@ -41,7 +35,6 @@ export function createStateStore(
           offsets: state.offsets ?? {},
           failures: state.failures ?? {},
           quarantined: state.quarantined ?? {},
-          extraction: state.extraction ?? null,
           extractorSessions: state.extractorSessions ?? {},
           sweptAt: state.sweptAt ?? null,
         };
@@ -49,18 +42,7 @@ export function createStateStore(
         return EMPTY();
       }
     }
-    return adoptLegacyProcessed();
-  }
-
-  function adoptLegacyProcessed() {
-    const state = EMPTY();
-    const legacy = config.legacyProcessedPath;
-    if (!existsSync(legacy)) return state;
-    try {
-      state.processed = JSON.parse(readFileSync(legacy, "utf-8")) ?? {};
-    } catch {
-    }
-    return state;
+    return EMPTY();
   }
 
   function save(state) {
@@ -147,35 +129,6 @@ export function createStateStore(
     return true;
   }
 
-  function leaseExpiresAt(extraction) {
-    const startedAt = Date.parse(extraction?.startedAt ?? "");
-    return Number.isFinite(startedAt) ? startedAt + leaseMs : null;
-  }
-
-  function acquireExtraction(holder) {
-    const state = load();
-    const current = state.extraction;
-    const expiresAt = leaseExpiresAt(current);
-    if (current && expiresAt !== null && Date.now() < expiresAt) return false;
-
-    state.extraction = { holder, startedAt: new Date().toISOString() };
-    save(state);
-
-    if (load().extraction?.holder !== holder) return false;
-
-    owned = holder;
-    return true;
-  }
-
-  function releaseExtraction(holder = owned) {
-    if (!holder) return;
-    const state = load();
-    if (state.extraction?.holder !== holder) return;
-    state.extraction = null;
-    save(state);
-    if (owned === holder) owned = null;
-  }
-
   function offsetIn(state, sessionId) {
     const offset = state.offsets[sessionId];
     return Number.isInteger(offset) && offset >= 0 ? offset : START_OF_TRANSCRIPT;
@@ -191,8 +144,5 @@ export function createStateStore(
     releaseQuarantine,
     snapshot,
     claimSweep,
-    leaseExpiresAt,
-    acquireExtraction,
-    releaseExtraction,
   };
 }

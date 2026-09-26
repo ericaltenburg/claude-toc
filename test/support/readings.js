@@ -2,7 +2,7 @@
 // renders it. These are the shape `summarizeStatus` takes: the gathering half of status.js
 // produces them from a real corpus, and a test supplies them directly.
 
-import { EXTRACTION_LEASE_MS } from "../../src/state.js";
+import { EXTRACTION_LOCK_IS_STALE_AFTER_MS } from "../../src/extraction-lock.js";
 import { AFTERNOON_ON_27_AUGUST_IN_NEW_YORK } from "./corpus.js";
 
 export const NEW_YORK = "America/New_York";
@@ -50,13 +50,17 @@ export function corpusReadings(overrides = {}) {
 export function leaseExpired(now, expiredAgo) {
   return {
     holder: "sweep-316972f2",
-    startedAt: now - expiredAgo - EXTRACTION_LEASE_MS,
+    startedAt: now - expiredAgo - EXTRACTION_LOCK_IS_STALE_AFTER_MS,
     expiresAt: now - expiredAgo,
   };
 }
 
 export function leaseLive(now) {
-  return { holder: "sweep-316972f2", startedAt: now, expiresAt: now + EXTRACTION_LEASE_MS };
+  return {
+    holder: "sweep-316972f2",
+    startedAt: now,
+    expiresAt: now + EXTRACTION_LOCK_IS_STALE_AFTER_MS,
+  };
 }
 
 export function factsDated(dates) {

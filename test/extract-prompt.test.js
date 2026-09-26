@@ -63,3 +63,28 @@ test("candidate topics and known facts are named in the prompt when there are an
   assert.match(withContext, /\(brazil\/Context\) uses version sets/);
   assert.match(withContext, /do not repeat these/);
 });
+
+// The candidate list shows each topic's summary, so the summary steers where the next session's
+// facts are filed. A summary that recaps the latest session describes that session and misfiles
+// the next one; a reused topic keeps the subject description it already has.
+test("the summary describes the topic's subject, and a reused candidate keeps its own", () => {
+  const prompt = buildExtractPrompt({
+    candidates: [{ topic: "brazil", summary: "the build system", keywords: "build brazil" }],
+  });
+
+  assert.match(prompt, /topic\.summary: one sentence describing the subject the topic covers/);
+  assert.match(prompt, /return that candidate's summary unchanged/);
+});
+
+// A hand-classified sample of the corpus found only about 63% of Decisions were settled choices,
+// the rest intentions and session narrative, and the same working-style preferences recurring
+// across 11 topics. Each rule below answers one of those.
+test("a decision is a settled outcome, and narrative and working-style preferences are not facts", () => {
+  const prompt = buildExtractPrompt();
+
+  assert.match(prompt, /decisions: settled outcomes only/);
+  assert.match(prompt, /A plan, an intention or a pending item is not a decision/);
+  assert.doesNotMatch(prompt, /"will /i, "an example that is an intention teaches intentions");
+  assert.match(prompt, /record the durable fact itself/);
+  assert.match(prompt, /those live in the user's CLAUDE\.md/);
+});

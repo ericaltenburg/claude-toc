@@ -312,6 +312,27 @@ test("the sql escape hatch refuses anything that is not a read", () => {
   });
 });
 
+test("a write behind a with clause is refused and deletes nothing", () => {
+  withSearch((config, search) => {
+    writeTopic(config, "broadcast_variants", FACTS);
+
+    assert.throws(() => search.sql("with x as (select 1) delete from facts"), /read-?only/i);
+    assert.equal(search.sql("select count(*) c from facts")[0].c, 3);
+  });
+});
+
+test("the index still refreshes after the sql escape hatch refused a write", () => {
+  withSearch((config, search) => {
+    writeTopic(config, "broadcast_variants", FACTS);
+    assert.throws(() => search.sql("with x as (select 1) delete from facts"));
+
+    writeTopic(config, "alarm_tuning", { Context: [FACT_WITHOUT_A_SESSION_ID] });
+    search.refresh();
+
+    assert.equal(search.db.prepare("select count(*) c from facts").get().c, 4);
+  });
+});
+
 test("read-only database access is pre-authorised in settings", () => {
   const settings = JSON.parse(
     readFileSync(join(REPO_ROOT, ".claude", "settings.json"), "utf-8")

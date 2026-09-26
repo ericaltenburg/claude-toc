@@ -13,6 +13,13 @@ import { chunkTurns, unreadSlice } from "./transcript.js";
 export const CANDIDATE_TOPICS_IN_A_PROMPT = 10;
 export const KNOWN_FACTS_IN_A_PROMPT = 20;
 
+// A session is extracted a slice at a time, so what the model is likeliest to write again,
+// reworded, is what its earlier slices already produced: 93% of close duplicate pairs came from
+// one session. Those facts lead the known facts whatever topic they were filed under. The cap is
+// for the session that runs for days, and past it the newest are kept, since they sit closest to
+// the unread slice.
+export const SAME_SESSION_FACTS_IN_A_PROMPT = 100;
+
 const FACTS_SCANNED_FOR_CANDIDATES = 200;
 const SAME_PROJECT_BOOST = 2;
 const CHARS_PER_MODEL_CALL = 300_000;
@@ -65,7 +72,7 @@ export function createExtractor(
       return outcome("nothing-to-extract", { sessionId, offset: slice.offset });
     }
 
-    const { candidates, knownFacts } = promptContextFromAFreshIndex(slice.text, project);
+    const { candidates, knownFacts } = promptContextFromAFreshIndex(slice.text, project, sessionId);
     const prompt = buildExtractPrompt({ candidates, knownFacts });
     const chunks = chunkTurns(turns, maxChunkChars);
 
@@ -127,27 +134,42 @@ export function createExtractor(
     throw lastError;
   }
 
-  function promptContextFromAFreshIndex(text, project) {
+  function promptContextFromAFreshIndex(text, project, sessionId) {
     index.refresh();
 
+    const ownFacts = factsAlreadyExtractedFrom(sessionId);
     const match = salientTermsQuery(text);
-    if (!match) return { candidates: [], knownFacts: [] };
+    if (!match) return { candidates: [], knownFacts: ownFacts.map(asKnownFact) };
 
     const ranked = factsRankedAgainst(match);
     const candidates = rankedCandidates(ranked, project);
     const chosen = new Set(candidates.map((candidate) => candidate.topic));
-    const knownFacts = ranked
-      .filter((row) => chosen.has(row.topic))
-      .slice(0, factLimit)
-      .map((row) => ({ topic: row.topic, section: row.section, text: row.text }));
+    const listed = new Set(ownFacts.map((row) => row.id));
+    const knownFacts = [
+      ...ownFacts,
+      ...ranked.filter((row) => chosen.has(row.topic) && !listed.has(row.id)).slice(0, factLimit),
+    ].map(asKnownFact);
 
     return { candidates, knownFacts };
+  }
+
+  // A fact carries a truncated session id (toc.js), so it matches as a prefix of the full one,
+  // the same way SESSION_STARTS_WITH_THE_FACTS_PREFIX joins the two.
+  function factsAlreadyExtractedFrom(sessionId) {
+    return db
+      .prepare(
+        `select id, topic, section, text from facts
+          where session is not null and substr(?, 1, length(session)) = session
+          order by date desc, id desc limit ?`
+      )
+      .all(sessionId, SAME_SESSION_FACTS_IN_A_PROMPT);
   }
 
   function factsRankedAgainst(match) {
     return db
       .prepare(
-        `select f.topic as topic, f.section as section, f.text as text, bm25(facts_fts) as rank
+        `select f.id as id, f.topic as topic, f.section as section, f.text as text,
+                bm25(facts_fts) as rank
          from facts_fts join facts f on f.id = facts_fts.rowid
          where facts_fts match ?
          order by bm25(facts_fts), f.date desc limit ?`
@@ -251,6 +273,10 @@ function firstParsable(candidates) {
     if (Number.isFinite(at)) return at;
   }
   return null;
+}
+
+function asKnownFact(row) {
+  return { topic: row.topic, section: row.section, text: row.text };
 }
 
 function normalizedTopicId(id) {

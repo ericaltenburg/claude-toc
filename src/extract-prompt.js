@@ -22,8 +22,11 @@ Return ONLY valid JSON with this exact schema:
 Rules:
 - topic.id: short reusable identifier (e.g. "broadcast_variants", "resume_project")
 - keywords: words that would appear in future messages about this topic
+- topic.summary: one sentence describing the subject the topic covers: what it is about, stated so it stays true across sessions (e.g. "How ALCS stores and serves broadcast variants"). It never mentions a session, the user, or what was done.
 - context: durable truths learned (e.g. "ALCS uses DynamoDB for broadcast variants")
-- decisions: choices made (e.g. "will use topic-scoped memory instead of flat summarization")
+- decisions: settled outcomes only: a choice that was made and stands, with its reason when one was stated (e.g. "Chose topic-scoped memory over flat summarization, because flat summaries lost per-subject detail"). A plan, an intention or a pending item is not a decision.
+- context and decisions record what the conversation established, not what happened in it. Session narrative (what was run, committed, created, opened or asked, or who did what) is left out unless it established a durable fact; when it did, record the durable fact itself (e.g. "The deploy role lacks s3:PutObject", not "Ran the deploy and it failed with AccessDenied").
+- leave out the user's working-style preferences and conventions for the assistant (e.g. "no em dashes"); those live in the user's CLAUDE.md.
 - if the conversation has no meaningful content, return {"skip": true}
 - deduplicate — don't extract things that are essentially the same fact reworded
 `;
@@ -38,13 +41,20 @@ export function buildExtractPrompt({ candidates = [], knownFacts = [] } = {}) {
       prompt += candidate.keywords ? ` (keywords: ${candidate.keywords})` : "";
       prompt += `\n`;
     }
+    // A topic's summary is overwritten by every extraction that lands on it, so a reused topic
+    // hands its summary back as it is. Rewriting only a missing or recap-shaped one is what lets
+    // summaries that drifted into describing a session heal as later sessions land.
     prompt +=
-      `\nIf this conversation belongs to one of those topics, use that topic's id exactly.\n` +
+      `\nIf this conversation belongs to one of those topics, use that topic's id exactly, and ` +
+      `return that candidate's summary unchanged. Rewrite it as a description of the subject only ` +
+      `when it is missing, no longer describes the subject, or reads as a recap of a session.\n` +
       `Only invent a new topic.id if none of them fits.\n`;
   }
 
+  // Not "about those topics": the facts this session's earlier slices produced lead the list,
+  // wherever they were filed.
   if (knownFacts.length) {
-    prompt += `\nAlready known about those topics — do not repeat these:\n`;
+    prompt += `\nAlready in memory, so do not repeat these:\n`;
     for (const fact of knownFacts) {
       prompt += `- (${fact.topic}/${fact.section}) ${fact.text}\n`;
     }
