@@ -2,10 +2,22 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { appendFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  openSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 
-import { openIndex, SCHEMA_VERSION } from "../src/search-index.js";
-import { createStateStore } from "../src/state.js";
+import { localDateParts } from "../src/local-time.js";
+import { openIndex, SCHEMA_VERSION } from "../src/index/open.js";
+import { parsePromptRecord } from "../src/index/refresh.js";
+import { createStateStore } from "../src/sessions/progress.js";
 import {
   AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
   LATE_ON_26_AUGUST_IN_NEW_YORK,
@@ -21,8 +33,19 @@ const NY = "America/New_York";
 
 const plain = (row) => (row ? { ...row } : row);
 
+// The index hands out no connection (ADR 0017), so these tests read what landed in its tables
+// through a connection of their own on the same file.
 function indexOf(config) {
-  return openIndex(config, { timeZone: NY });
+  const index = openIndex(config, { timeZone: NY });
+  const db = new DatabaseSync(config.indexPath);
+  return {
+    ...index,
+    db,
+    close: () => {
+      db.close();
+      index.close();
+    },
+  };
 }
 
 function withCorpus(run) {
@@ -399,6 +422,50 @@ test("re-reads the whole prompt log when it has been emptied and then refilled",
   });
 });
 
+test("parses a prompt log record", () => {
+  const record = parsePromptRecord(
+    JSON.stringify({
+      display: "what did we decide about broadcast variants?",
+      timestamp: 1774279096774,
+      project: "/some/project",
+      sessionId: "4cc461d6-2d88-4426-966c-ba2081ca75bb",
+    }),
+    NY
+  );
+
+  assert.deepEqual(record, {
+    ts: 1774279096774,
+    localDate: localDateParts(1774279096774, NY).date,
+    localTime: localDateParts(1774279096774, NY).time,
+    session: "4cc461d6-2d88-4426-966c-ba2081ca75bb",
+    project: "/some/project",
+    text: "what did we decide about broadcast variants?",
+    isCommand: 0,
+  });
+});
+
+test("flags a prompt that is a slash command", () => {
+  const record = parsePromptRecord(
+    JSON.stringify({ display: "/toc-search variants", timestamp: 1774279104053 })
+  );
+
+  assert.equal(record.isCommand, 1);
+  assert.equal(record.session, null);
+  assert.equal(record.project, null);
+});
+
+test("skips a malformed prompt log line rather than throwing", () => {
+  assert.equal(parsePromptRecord("{not json"), null);
+  assert.equal(parsePromptRecord(""), null);
+  assert.equal(parsePromptRecord("null"), null);
+  assert.equal(parsePromptRecord(JSON.stringify({ display: "no timestamp" })), null);
+  assert.equal(parsePromptRecord(JSON.stringify({ timestamp: 1774279104053 })), null);
+  assert.equal(
+    parsePromptRecord(JSON.stringify({ display: "  ", timestamp: 1774279104053 })),
+    null
+  );
+});
+
 test("records when a session was extracted and which topic it fed", () => {
   withCorpus((config, index) => {
     appendSessions(config, [
@@ -483,6 +550,38 @@ test("rebuilds from scratch when the index file is not a database at all", () =>
   }
 });
 
+// The first 100 bytes are the file header, left intact so that SQLite opens the file as a
+// database and only finds the damage when it reads a page.
+const THE_FILE_HEADER = 100;
+
+function damagePagesOf(path) {
+  const fd = openSync(path, "r+");
+  try {
+    writeSync(fd, Buffer.alloc(4000, 0xab), 0, 4000, THE_FILE_HEADER);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+test("rebuilds from scratch when the index is a database whose pages are damaged", () => {
+  const config = tempCorpus();
+  writeTopic(config, "alarm_tuning", { Context: ["- Catch-all alarm is noisy [2026-04-24]"] });
+  const first = indexOf(config);
+  first.refresh();
+  first.close();
+  damagePagesOf(config.indexPath);
+
+  const index = indexOf(config);
+  try {
+    const stats = index.refresh();
+
+    assert.equal(stats.rebuilt, true);
+    assert.equal(index.db.prepare("select count(*) c from facts").get().c, 1);
+  } finally {
+    index.close();
+  }
+});
+
 test("deleting the index and rebuilding it produces an equivalent index", () => {
   const config = tempCorpus();
   writeTopic(config, "broadcast_variants", FACTS);
@@ -521,10 +620,25 @@ Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(holdForMs));
 db.exec("commit");
 `;
 
-function anotherProcessHoldingTheWriteLock(config, { forMs }) {
+// Exclusive locking mode keeps even readers out, which is what a process mid-rebuild or
+// mid-checkpoint can do to anyone opening the index in that moment.
+const HOLD_THE_WHOLE_DATABASE = `
+const { writeSync } = require("node:fs");
+const { DatabaseSync } = require("node:sqlite");
+const [indexPath, holdForMs] = process.argv.slice(1);
+const db = new DatabaseSync(indexPath);
+db.exec("pragma locking_mode = exclusive");
+db.exec("begin exclusive");
+db.exec("insert into meta(key, value) values ('written_by', 'another process')");
+writeSync(1, "holding\\n");
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(holdForMs));
+db.exec("rollback");
+`;
+
+function anotherProcessHoldingTheWriteLock(config, { forMs, script = HOLD_THE_WRITE_LOCK }) {
   const holder = spawn(
     process.execPath,
-    ["--disable-warning=ExperimentalWarning", "-e", HOLD_THE_WRITE_LOCK, config.indexPath, String(forMs)],
+    ["--disable-warning=ExperimentalWarning", "-e", script, config.indexPath, String(forMs)],
     { stdio: ["ignore", "pipe", "inherit"] }
   );
   const exited = once(holder, "exit").then(([code]) => code);
@@ -534,8 +648,42 @@ function anotherProcessHoldingTheWriteLock(config, { forMs }) {
       throw new Error(`the lock holder exited with ${code} before it held the lock`);
     }),
   ]);
-  return { holding, exited };
+  return { holding, exited, stop: () => holder.kill() };
 }
+
+// SQLite reports a lock it has waited out as SQLITE_BUSY. That is a good index in use by
+// another process, and the catch-all this replaced deleted it and built an empty one beside
+// the process still holding the old.
+test("an index another process has locked is left alone, and the lock reaches the caller", async () => {
+  const config = tempCorpus();
+  writeTopic(config, "alarm_tuning", { Context: ["- Catch-all alarm is noisy [2026-04-24]"] });
+  const first = indexOf(config);
+  first.refresh();
+  first.close();
+  const theIndexFile = statSync(config.indexPath).ino;
+
+  const other = anotherProcessHoldingTheWriteLock(config, {
+    forMs: 60_000,
+    script: HOLD_THE_WHOLE_DATABASE,
+  });
+  try {
+    await other.holding;
+
+    assert.throws(() => openIndex(config), /database is locked/);
+    assert.equal(statSync(config.indexPath).ino, theIndexFile, "the locked index was not replaced");
+  } finally {
+    other.stop();
+    await other.exited;
+  }
+
+  const second = indexOf(config);
+  try {
+    assert.equal(second.refresh().rebuilt, false);
+    assert.equal(second.db.prepare("select count(*) c from facts").get().c, 1);
+  } finally {
+    second.close();
+  }
+});
 
 test("a refresh waits for another process's write transaction instead of failing", async () => {
   const config = tempCorpus();

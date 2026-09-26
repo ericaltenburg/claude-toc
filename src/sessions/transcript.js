@@ -1,6 +1,6 @@
 // Reading a Claude Code transcript. The transcript is a foreign format — Claude Code writes
 // it and this project only ever reads it — so every fact about its shape belongs here, the
-// way parse.js owns the corpus's own format.
+// way corpus/format.js owns the corpus's own format.
 //
 // Two readers, because they read for different things: the extractor takes the unread tail
 // and turns it into turns, and the sweeper peeks at the opening to recognise the extractor's
@@ -9,9 +9,13 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
-import { EXTRACTION_PROMPT_MARKER } from "./extract-prompt.js";
-import { parseJsonLine } from "./parse.js";
-import { START_OF_TRANSCRIPT } from "./state.js";
+import { parseJsonLine } from "../json-lines.js";
+import { START_OF_TRANSCRIPT } from "./progress.js";
+
+// The words the extraction prompt opens with, and so the words an extractor's own transcript
+// opens with (ADR 0011). Recognising those transcripts is a question about which sessions
+// exist, so the words live here, and the prompt is built on them so the two cannot drift.
+export const EXTRACTION_PROMPT_MARKER = "You are a memory extraction system";
 
 const NEWLINE = 0x0a;
 const READ_CHUNK_BYTES = 64 * 1024;

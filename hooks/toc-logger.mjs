@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createConfig } from "../src/config.js";
-import { alreadyIndexed, recordSession } from "../src/session-index.js";
+import { alreadyIndexed, recordSession } from "../src/sessions/registry.js";
 
 const STDIN_TIMEOUT_MS = 5000;
 

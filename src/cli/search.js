@@ -5,7 +5,7 @@ import {
   FACT_LIMIT,
   PROMPT_LIMIT,
   SOURCES_A_CALLER_MAY_ASK_FOR,
-} from "../search.js";
+} from "../search/search.js";
 
 const USAGE = `toc-search [options] [query]
 

@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 
 import { createConfig } from "../config.js";
-import { bedrockBilledToOurOwnProfile, createExtractor } from "../extract.js";
-import { createExtractionLock } from "../extraction-lock.js";
-import { indexedSessions } from "../session-index.js";
-import { createStateStore, transcriptHasUnreadTurns } from "../state.js";
-import { createSweeper } from "../sweep.js";
-import { createTopicStore } from "../toc.js";
+import { createTopicStore } from "../corpus/topics.js";
+import { bedrockBilledToOurOwnProfile, createExtractor } from "../extract/extractor.js";
+import { createExtractionLock } from "../extract/lock.js";
+import { createSweeper } from "../extract/sweep.js";
+import { knownSessions } from "../sessions/known-sessions.js";
+import { createStateStore, transcriptHasUnreadTurns } from "../sessions/progress.js";
 
 // A retried session is chunked smaller than a swept one: the retry exists because something
 // about the session failed, and a smaller slice is the cheapest thing to vary.
@@ -47,14 +47,30 @@ function hasUnreadTranscript(session, state) {
   );
 }
 
+// Every command below reads the one list of known sessions, the same list the sweep reads, so
+// a session a sweep would take is one a person can list, name and retry (ADR 0017).
+function everyKnownSession(config, state) {
+  return [...knownSessions(config, { recorded: state.snapshot() })];
+}
+
+function sessionsMatching(config, state, prefix) {
+  const where = (known) => known.session_id.startsWith(prefix);
+  return [...knownSessions(config, { recorded: state.snapshot(), where })];
+}
+
 function listSessions(sessions, state) {
+  if (!sessions.length) {
+    console.log("No sessions yet.");
+    return;
+  }
+
   const unread = sessionsWithUnreadTranscript(sessions, state);
   console.log(`Sessions: ${sessions.length} total, ${unread.length} unextracted`);
 
   for (const session of sessions) {
     const record = state.processedRecord(session.session_id);
     console.log(
-      `  ${String(session.session_id).slice(0, 8)}  ${session.started}  ` +
+      `  ${String(session.session_id).slice(0, 8)}  ${session.started ?? "undated"}  ` +
         `${record ? `✓ ${record.topic || "skipped"}` : "pending"}`
     );
   }
@@ -92,13 +108,13 @@ function extractEach(config, sessions, options = {}) {
   }
 }
 
-function retry(config, state, sessions, prefix, callModel) {
+function retry(config, state, prefix, callModel) {
   if (!prefix) {
     console.log("Usage: toc-extract --retry <session-id-prefix>");
     return 2;
   }
 
-  const chosen = sessions.filter((session) => String(session.session_id).startsWith(prefix));
+  const chosen = sessionsMatching(config, state, prefix);
   if (!chosen.length) {
     console.log(`No session matching "${prefix}"`);
     return 1;
@@ -134,25 +150,19 @@ function run(argv, callModel) {
     return 0;
   }
 
-  const sessions = indexedSessions(config);
-  if (!sessions) {
-    console.log("No sessions indexed yet.");
-    return 0;
-  }
-
   if (arg === "--retry") {
-    return retry(config, state, sessions, argv[1], callModel);
+    return retry(config, state, argv[1], callModel);
   }
 
   if (!arg) {
-    listSessions(sessions, state);
+    listSessions(everyKnownSession(config, state), state);
     return 0;
   }
 
   const chosen =
     arg === "--all"
-      ? sessionsWithUnreadTranscript(sessions, state)
-      : sessions.filter((session) => String(session.session_id).startsWith(arg));
+      ? sessionsWithUnreadTranscript(everyKnownSession(config, state), state)
+      : sessionsMatching(config, state, arg);
 
   if (!chosen.length) {
     console.log(arg === "--all" ? "Nothing unread to extract." : `No session matching "${arg}"`);

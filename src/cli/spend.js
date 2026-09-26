@@ -1,6 +1,6 @@
 import { createConfig } from "../config.js";
-import { dollars, thousands } from "../format.js";
-import { createSpendLog } from "../spend.js";
+import { dollars, thousands } from "../numbers.js";
+import { createSpendLog } from "../extract/spend.js";
 
 function reportSection(title, tallies) {
   console.log(`\n${title}`);

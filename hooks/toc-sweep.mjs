@@ -5,9 +5,9 @@ import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 
 import { createConfig } from "../src/config.js";
-import { createExtractionLock } from "../src/extraction-lock.js";
-import { createStateStore } from "../src/state.js";
-import { createSweeper } from "../src/sweep.js";
+import { createExtractionLock } from "../src/extract/lock.js";
+import { createSweeper } from "../src/extract/sweep.js";
+import { createStateStore } from "../src/sessions/progress.js";
 
 const STDIN_TIMEOUT_MS = 5000;
 

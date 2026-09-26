@@ -4,9 +4,10 @@ import { readFileSync, writeFileSync, existsSync, mkdtempSync, symlinkSync } fro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createSearch, ftsQuery } from "../src/search.js";
+import { ftsQuery } from "../src/index/terms.js";
+import { createSearch } from "../src/search/search.js";
 import { parseArgs } from "../src/cli/search.js";
-import { createStateStore } from "../src/state.js";
+import { createStateStore } from "../src/sessions/progress.js";
 import {
   AFTERNOON_ON_27_AUGUST_IN_NEW_YORK,
   LATE_ON_26_AUGUST_IN_NEW_YORK,
@@ -329,7 +330,7 @@ test("the index still refreshes after the sql escape hatch refused a write", () 
     writeTopic(config, "alarm_tuning", { Context: [FACT_WITHOUT_A_SESSION_ID] });
     search.refresh();
 
-    assert.equal(search.db.prepare("select count(*) c from facts").get().c, 4);
+    assert.equal(search.sql("select count(*) c from facts")[0].c, 4);
   });
 });
 

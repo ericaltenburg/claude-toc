@@ -1,202 +1,49 @@
-import { DatabaseSync } from "node:sqlite";
+// Bringing the index up to date with what it derives from: the corpus's topic files and
+// toc.json, Claude Code's prompt log, the session index and the extraction state. It reads
+// the corpus and the sessions layer through their own modules, and it writes nothing but
+// the index.
+//
+// Refresh is incremental. A topic file is reparsed only when its modification time or size
+// changed, and the two logs are read only past the byte offset already consumed.
+
 import {
   closeSync,
   existsSync,
   fstatSync,
-  mkdirSync,
   openSync,
   readFileSync,
   readSync,
-  readdirSync,
-  rmSync,
   statSync,
 } from "node:fs";
-import { basename, join } from "node:path";
 
-import { parsePromptRecord, parseSessionRecord, parseTopic } from "./parse.js";
-import { createStateStore } from "./state.js";
-import { createTopicStore } from "./toc.js";
-
-export const SCHEMA_VERSION = 1;
-
-export const SESSION_STARTS_WITH_THE_FACTS_PREFIX =
-  "substr(s.session_id, 1, length(f.session)) = f.session";
-
-const SCHEMA = `
-create table meta (key text primary key, value text not null);
-
-create table topics (
-  id text primary key,
-  summary text,
-  keywords text,
-  mtime_ms integer,
-  size integer
-);
-
-create table facts (
-  id integer primary key,
-  topic text not null references topics(id),
-  section text not null,
-  text text not null,
-  session text,
-  date text,
-  line integer
-);
-
-create table prompts (
-  id integer primary key,
-  ts integer not null,
-  local_date text not null,
-  local_time text not null,
-  session text,
-  project text,
-  text text not null,
-  is_command integer not null
-);
-
-create table sessions (
-  session_id text primary key,
-  transcript_path text,
-  project text,
-  started_at text,
-  extracted_at text,
-  topic text,
-  extraction_offset integer
-);
-
-create virtual table facts_fts using fts5(
-  text, content='facts', content_rowid='id', tokenize='porter unicode61'
-);
-create virtual table prompts_fts using fts5(
-  text, content='prompts', content_rowid='id', tokenize='porter unicode61'
-);
-
-create trigger facts_ai after insert on facts begin
-  insert into facts_fts(rowid, text) values (new.id, new.text);
-end;
-create trigger facts_ad after delete on facts begin
-  insert into facts_fts(facts_fts, rowid, text) values ('delete', old.id, old.text);
-end;
-create trigger prompts_ai after insert on prompts begin
-  insert into prompts_fts(rowid, text) values (new.id, new.text);
-end;
-create trigger prompts_ad after delete on prompts begin
-  insert into prompts_fts(prompts_fts, rowid, text) values ('delete', old.id, old.text);
-end;
-
-create index facts_date on facts(date);
-create index facts_topic on facts(topic);
-create index facts_session on facts(session);
-create index prompts_local_date on prompts(local_date);
-create index prompts_session on prompts(session);
-create index prompts_project on prompts(project);
-`;
+import { parseTopic } from "../corpus/format.js";
+import { createTopicStore } from "../corpus/topics.js";
+import { parseJsonLine } from "../json-lines.js";
+import { localDateParts } from "../local-time.js";
+import { createStateStore } from "../sessions/progress.js";
+import { parseSessionRecord } from "../sessions/registry.js";
 
 const PROMPT_OFFSET = "prompt_log_offset";
 const SESSION_OFFSET = "session_log_offset";
 
-export function openIndex(config, { timeZone } = {}) {
-  mkdirSync(config.corpusDir, { recursive: true });
-
-  let db;
-  let rebuilt;
-  try {
-    db = connect(config);
-    rebuilt = ensureSchema(db);
-  } catch {
-    db?.close();
-    rmSync(config.indexPath, { force: true });
-    db = connect(config);
-    rebuilt = ensureSchema(db);
-  }
-
-  let rebuiltPending = rebuilt;
-
-  function refresh() {
-    // Immediate, because refresh reads before it writes. A deferred transaction would take a
-    // read snapshot first and upgrade to a write later, and in WAL mode an upgrade blocked by
-    // another writer fails with SQLITE_BUSY at once: the busy timeout never retries it.
-    db.exec("begin immediate");
-    try {
-      const stats = {
-        rebuilt: rebuiltPending,
-        ...refreshTopics(db, config),
-        ...refreshPrompts(db, config, timeZone),
-        ...refreshSessions(db, config),
-      };
-      db.exec("commit");
-      rebuiltPending = false;
-      return stats;
-    } catch (error) {
-      db.exec("rollback");
-      throw error;
-    }
-  }
-
-  return { db, refresh, close: () => db.close() };
-}
-
-// More than one process refreshes the index: the extractor after every session, and a
-// toc-search or toc-status that may run in the same moment. Without a busy timeout SQLite
-// fails the second writer at once with "database is locked"; with one it waits its turn.
-const WAIT_FOR_ANOTHER_WRITER_MS = 5000;
-
-function connect(config) {
-  const db = new DatabaseSync(config.indexPath);
-  db.exec(`pragma busy_timeout = ${WAIT_FOR_ANOTHER_WRITER_MS}`);
-  db.exec("pragma journal_mode = wal");
-  db.exec("pragma foreign_keys = on");
-  return db;
-}
-
-function ensureSchema(db) {
-  if (storedVersion(db) === SCHEMA_VERSION) return false;
-
-  dropEverything(db);
-  db.exec(SCHEMA);
-  db.prepare("insert into meta(key, value) values ('schema_version', ?)").run(
-    String(SCHEMA_VERSION)
-  );
-  return true;
-}
-
-function storedVersion(db) {
-  try {
-    const row = db.prepare("select value from meta where key = 'schema_version'").get();
-    return row ? Number(row.value) : null;
-  } catch {
-    return null;
-  }
-}
-
-function dropEverything(db) {
-  db.exec("pragma foreign_keys = off");
-  const objects = db
-    .prepare("select type, name from sqlite_master where name not like 'sqlite_%'")
-    .all();
-
-  for (const kind of ["trigger", "view", "table"]) {
-    for (const object of objects.filter((o) => o.type === kind)) {
-      db.exec(`drop ${kind} if exists "${object.name}"`);
-    }
-  }
-  db.exec("pragma foreign_keys = on");
+export function refreshEverything(db, config, timeZone) {
+  return {
+    ...refreshTopics(db, config),
+    ...refreshPrompts(db, config, timeZone),
+    ...refreshSessions(db, config),
+  };
 }
 
 // --- Topics and facts ---
 
 function refreshTopics(db, config) {
-  const files = existsSync(config.topicsDir)
-    ? readdirSync(config.topicsDir).filter(
-        (file) => file.endsWith(".md") && !file.endsWith(".merged.md")
-      )
-    : [];
+  const topics = createTopicStore(config);
 
   const known = new Map(
     db.prepare("select id, mtime_ms, size from topics").all().map((row) => [row.id, row])
   );
 
-  const toc = loadToc(config);
+  const toc = tocEntries(topics);
   const upsertTopic = db.prepare(
     `insert into topics(id, summary, keywords, mtime_ms, size) values (?, ?, ?, ?, ?)
      on conflict(id) do update set
@@ -214,11 +61,9 @@ function refreshTopics(db, config) {
   let parsed = 0;
   let factsIndexed = 0;
 
-  for (const file of files) {
-    const id = basename(file, ".md");
+  for (const { id, path } of topics.topicFiles()) {
     seen.add(id);
 
-    const path = join(config.topicsDir, file);
     const stat = statSync(path);
     const factsUnchanged = matchesIndexedFile(known.get(id), stat);
 
@@ -259,9 +104,9 @@ function keywordText(entry) {
   return Array.isArray(entry.keywords) ? entry.keywords.join(" ") : null;
 }
 
-function loadToc(config) {
+function tocEntries(topics) {
   try {
-    return createTopicStore(config).loadToc().topics ?? {};
+    return topics.loadToc().topics ?? {};
   } catch {
     return {};
   }
@@ -297,6 +142,31 @@ function refreshPrompts(db, config, timeZone) {
   });
 
   return { promptsIndexed: count };
+}
+
+// The prompt log is Claude Code's history.jsonl, and the index is the only thing that reads
+// it, so its record shape is known here and nowhere else.
+export function parsePromptRecord(line, timeZone) {
+  const record = parseJsonLine(line);
+  if (!record) return null;
+
+  const text = typeof record.display === "string" ? record.display.trim() : "";
+  if (!text) return null;
+
+  const ts = typeof record.timestamp === "number" ? record.timestamp : NaN;
+  if (!Number.isFinite(ts)) return null;
+
+  const { date, time } = localDateParts(ts, timeZone);
+
+  return {
+    ts,
+    localDate: date,
+    localTime: time,
+    session: typeof record.sessionId === "string" ? record.sessionId : null,
+    project: typeof record.project === "string" ? record.project : null,
+    text,
+    isCommand: text.startsWith("/") ? 1 : 0,
+  };
 }
 
 // --- Sessions ---

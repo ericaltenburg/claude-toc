@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createConfig } from "../src/config.js";
-import { createTopicStore } from "../src/toc.js";
-import { parseTopic } from "../src/parse.js";
+import { createTopicStore } from "../src/corpus/topics.js";
+import { parseTopic } from "../src/corpus/format.js";
 import { EXTRACTOR, runCli, tempCorpus, topicPath } from "./support/corpus.js";
 
 const A_SESSION = "316972f2-1111-2222-3333-444455556666";

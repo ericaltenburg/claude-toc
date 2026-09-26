@@ -2,7 +2,7 @@
 // renders it. These are the shape `summarizeStatus` takes: the gathering half of status.js
 // produces them from a real corpus, and a test supplies them directly.
 
-import { EXTRACTION_LOCK_IS_STALE_AFTER_MS } from "../../src/extraction-lock.js";
+import { EXTRACTION_LOCK_IS_STALE_AFTER_MS } from "../../src/extract/lock.js";
 import { AFTERNOON_ON_27_AUGUST_IN_NEW_YORK } from "./corpus.js";
 
 export const NEW_YORK = "America/New_York";

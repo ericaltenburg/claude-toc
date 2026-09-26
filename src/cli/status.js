@@ -1,5 +1,5 @@
 import { createConfig } from "../config.js";
-import { createStatusReport } from "../status.js";
+import { createStatusReport } from "../status/status.js";
 import { tablesFor } from "./table.js";
 
 // One rendering, per ADR 0015. Sentences are prose and readings are boxed: the verdict and

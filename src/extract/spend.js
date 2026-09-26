@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 
-import { localDateParts } from "./parse.js";
+import { parseJsonLine } from "../json-lines.js";
+import { localDateParts } from "../local-time.js";
 
 export const LIST_RATES_PER_MILLION_TOKENS = {
   "global.anthropic.claude-sonnet-5": { input: 3, output: 15 },
@@ -30,7 +31,7 @@ export function createSpendLog(config, { timeZone, now = () => Date.now() } = {}
     return readFileSync(config.spendLogPath, "utf-8")
       .split("\n")
       .filter((line) => line.trim())
-      .map(parsedOrNull)
+      .map(parseJsonLine)
       .filter(Boolean);
   }
 
@@ -44,15 +45,6 @@ export function createSpendLog(config, { timeZone, now = () => Date.now() } = {}
   }
 
   return { record, calls, rates, summarize: () => summarizeSpend(calls(), rates()) };
-}
-
-function parsedOrNull(line) {
-  try {
-    const call = JSON.parse(line);
-    return call && typeof call === "object" ? call : null;
-  } catch {
-    return null;
-  }
 }
 
 export const UNDATED = "undated";

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 
-import { createSpendLog, estimatedCost, summarizeSpend } from "../src/spend.js";
+import { createSpendLog, estimatedCost, summarizeSpend } from "../src/extract/spend.js";
 import {
   runCli,
   tempCorpus,

@@ -3,9 +3,17 @@ import assert from "node:assert/strict";
 import { existsSync, statSync } from "node:fs";
 
 import { renewingBeforeEachCall } from "../../src/cli/extract.js";
-import { createExtractionLock } from "../../src/extraction-lock.js";
-import { createExtractor } from "../../src/extract.js";
-import { EXTRACTOR, idleFor, runCli, tempCorpus, writeTranscript } from "../support/corpus.js";
+import { createExtractor } from "../../src/extract/extractor.js";
+import { createExtractionLock } from "../../src/extract/lock.js";
+import {
+  appendSessions,
+  EXTRACTOR,
+  idleFor,
+  runCli,
+  tempCorpus,
+  transcriptPath,
+  writeTranscript,
+} from "../support/corpus.js";
 
 const A_MINUTE = 60_000;
 const SESSION = "316972f2-1111-2222-3333-444455556666";
@@ -60,6 +68,58 @@ test("an extractor a sweep spawned uses the sweep's lock and releases it", () =>
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(config.extractionLockPath), false);
+});
+
+// --- One list of sessions ---
+
+// One turn is too little to extract, so these reach the extractor and stop short of a model.
+const TOO_SHORT_TO_EXTRACT = [{ role: "user", text: "where do broadcast variants live?" }];
+
+test("a session only its transcript knows is listed, and found by --all and by its prefix", () => {
+  const config = tempCorpus();
+  writeTranscript(config, SESSION, TOO_SHORT_TO_EXTRACT);
+
+  const listing = runCli(EXTRACTOR, { args: [], config });
+  const all = runCli(EXTRACTOR, { args: ["--all"], config });
+  const byPrefix = runCli(EXTRACTOR, { args: ["316972f2"], config });
+
+  assert.match(listing.stdout, /1 total, 1 unextracted/);
+  assert.match(listing.stdout, /316972f2  undated  pending/);
+  for (const found of [all, byPrefix]) {
+    assert.equal(found.status, 0, found.stderr);
+    assert.match(found.stdout, /Extracting: 316972f2 \(undated\)\n  nothing-to-extract/);
+  }
+});
+
+test("a session the logger recorded still lists after its transcript rotated away", () => {
+  const config = tempCorpus();
+  appendSessions(config, [
+    {
+      session_id: SESSION,
+      transcript: transcriptPath(config, SESSION),
+      cwd: "/work/alcs",
+      started: "2026-08-27T15:00:00.000Z",
+    },
+  ]);
+
+  const listing = runCli(EXTRACTOR, { args: [], config });
+
+  assert.equal(listing.status, 0, listing.stderr);
+  assert.match(listing.stdout, /1 total, 0 unextracted/);
+  assert.match(listing.stdout, /316972f2  2026-08-27T15:00:00.000Z  pending/);
+});
+
+test("a session known from both its transcript and the logger is one session", () => {
+  const config = tempCorpus();
+  const transcript = writeTranscript(config, SESSION, TOO_SHORT_TO_EXTRACT);
+  appendSessions(config, [
+    { session_id: SESSION, transcript, cwd: "/work/alcs", started: "2026-08-27T15:00:00.000Z" },
+  ]);
+
+  const listing = runCli(EXTRACTOR, { args: [], config });
+
+  assert.match(listing.stdout, /1 total, 1 unextracted/);
+  assert.match(listing.stdout, /316972f2  2026-08-27T15:00:00.000Z  pending/);
 });
 
 test("every model call renews the lock before it is made", () => {
