@@ -27,6 +27,7 @@ const FACT_COLUMNS = [
 // A superseded fact is still evidence of what was once concluded, so it is returned, but only
 // after every current fact the same search found (ADR 0019).
 const CURRENT_FIRST = "(f.superseded_date is not null)";
+
 const PROMPT_COLUMNS = [
   "p.local_date",
   "p.local_time",
