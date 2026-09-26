@@ -22,6 +22,7 @@ Return ONLY valid JSON with this exact schema:
 Rules:
 - topic.id: short reusable identifier (e.g. "broadcast_variants", "resume_project")
 - keywords: words that would appear in future messages about this topic
+- topic.summary: one sentence describing the subject the topic covers: what it is about, stated so it stays true across sessions (e.g. "How ALCS stores and serves broadcast variants"). It never mentions a session, the user, or what was done.
 - context: durable truths learned (e.g. "ALCS uses DynamoDB for broadcast variants")
 - decisions: choices made (e.g. "will use topic-scoped memory instead of flat summarization")
 - if the conversation has no meaningful content, return {"skip": true}
@@ -38,8 +39,13 @@ export function buildExtractPrompt({ candidates = [], knownFacts = [] } = {}) {
       prompt += candidate.keywords ? ` (keywords: ${candidate.keywords})` : "";
       prompt += `\n`;
     }
+    // A topic's summary is overwritten by every extraction that lands on it, so a reused topic
+    // hands its summary back as it is. Rewriting only a missing or recap-shaped one is what lets
+    // summaries that drifted into describing a session heal as later sessions land.
     prompt +=
-      `\nIf this conversation belongs to one of those topics, use that topic's id exactly.\n` +
+      `\nIf this conversation belongs to one of those topics, use that topic's id exactly, and ` +
+      `return that candidate's summary unchanged. Rewrite it as a description of the subject only ` +
+      `when it is missing, no longer describes the subject, or reads as a recap of a session.\n` +
       `Only invent a new topic.id if none of them fits.\n`;
   }
 

@@ -63,3 +63,15 @@ test("candidate topics and known facts are named in the prompt when there are an
   assert.match(withContext, /\(brazil\/Context\) uses version sets/);
   assert.match(withContext, /do not repeat these/);
 });
+
+// The candidate list shows each topic's summary, so the summary steers where the next session's
+// facts are filed. A summary that recaps the latest session describes that session and misfiles
+// the next one; a reused topic keeps the subject description it already has.
+test("the summary describes the topic's subject, and a reused candidate keeps its own", () => {
+  const prompt = buildExtractPrompt({
+    candidates: [{ topic: "brazil", summary: "the build system", keywords: "build brazil" }],
+  });
+
+  assert.match(prompt, /topic\.summary: one sentence describing the subject the topic covers/);
+  assert.match(prompt, /return that candidate's summary unchanged/);
+});
