@@ -1,8 +1,6 @@
 import { homedir } from "os";
 import { join } from "path";
 
-const claudeCodeProjectDirNameFor = (path) => path.replace(/[^a-zA-Z0-9]/g, "-");
-
 export function createConfig(overrides = {}, env = process.env) {
   const claudeDir =
     overrides.claudeDir ?? env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
@@ -14,7 +12,13 @@ export function createConfig(overrides = {}, env = process.env) {
   const promptLog =
     overrides.promptLog ?? env.CLAUDE_TOC_PROMPT_LOG ?? join(claudeDir, "history.jsonl");
 
-  const extractorDir = overrides.extractorDir ?? join(corpusDir, "extractor");
+  // corpusDir is the root. Under it, files are grouped by how replaceable they are (ADR 0018).
+  const corpus = join(corpusDir, "corpus");
+  const ledger = join(corpusDir, "ledger");
+  const settings = join(corpusDir, "config");
+  const cache = join(corpusDir, "cache");
+
+  const extractorDir = overrides.extractorDir ?? join(cache, "extractor");
   const extractorCommand =
     overrides.extractorCommand ??
     env.CLAUDE_TOC_EXTRACTOR ??
@@ -28,17 +32,17 @@ export function createConfig(overrides = {}, env = process.env) {
     extractorCommand,
     awsProfile: overrides.awsProfile ?? env.CLAUDE_TOC_AWS_PROFILE ?? "claudecode",
     awsRegion: overrides.awsRegion ?? env.CLAUDE_TOC_AWS_REGION ?? env.AWS_REGION ?? "us-west-2",
-    spendLogPath: join(corpusDir, "spend.jsonl"),
-    modelRatesPath: join(corpusDir, "model-rates.json"),
-    extractorTranscriptsDir: join(transcriptsDir, claudeCodeProjectDirNameFor(extractorDir)),
-    topicsDir: join(corpusDir, "topics"),
+    topicsDir: join(corpus, "topics"),
+    // toc.json records each topic's file relative to itself, and both live in corpus/.
     topicsDirName: "topics",
-    tocPath: join(corpusDir, "toc.json"),
-    sessionIndexPath: join(corpusDir, "sessions.jsonl"),
-    statePath: join(corpusDir, "state.json"),
-    extractionLockPath: join(corpusDir, "extraction.lock"),
-    indexPath: join(corpusDir, "index.db"),
-    searchLogPath: join(corpusDir, "search.log"),
-    smokeQueriesPath: join(corpusDir, "smoke-queries.json"),
+    tocPath: join(corpus, "toc.json"),
+    statePath: join(ledger, "state.json"),
+    sessionIndexPath: join(ledger, "sessions.jsonl"),
+    spendLogPath: join(ledger, "spend.jsonl"),
+    searchLogPath: join(ledger, "search.log"),
+    smokeQueriesPath: join(settings, "smoke-queries.json"),
+    modelRatesPath: join(settings, "model-rates.json"),
+    indexPath: join(cache, "index.db"),
+    extractionLockPath: join(cache, "extraction.lock"),
   });
 }

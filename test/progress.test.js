@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import { ATTEMPTS_BEFORE_QUARANTINE, createStateStore } from "../src/sessions/progress.js";
 import { tempCorpus } from "./support/corpus.js";
@@ -44,7 +45,7 @@ test("records processed sessions in the one state file", () => {
   assert.equal(record.decisions, 2);
   assert.match(record.ts, /^\d{4}-\d{2}-\d{2}T/);
 
-  assert.deepEqual(readdirSync(config.corpusDir).sort(), ["state.json", "topics"]);
+  assert.deepEqual(readdirSync(dirname(config.statePath)), ["state.json"]);
 });
 
 test("records a skipped session so it is not retried forever", () => {

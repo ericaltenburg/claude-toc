@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/node",
+            "args": ["--optional", "${CLAUDE_PLUGIN_ROOT}/hooks/toc-prompt.mjs"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

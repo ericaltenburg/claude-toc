@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, rmSync } from "node:fs";
+import { dirname } from "node:path";
 
 import { createQueries } from "./queries.js";
 import { refreshEverything } from "./refresh.js";
@@ -77,7 +78,7 @@ create index prompts_project on prompts(project);
 `;
 
 export function openIndex(config, { timeZone } = {}) {
-  mkdirSync(config.corpusDir, { recursive: true });
+  mkdirSync(dirname(config.indexPath), { recursive: true });
 
   const { db, rebuilt } = openRebuildingOnlyWhatCannotBeRead(config);
   let rebuiltPending = rebuilt;

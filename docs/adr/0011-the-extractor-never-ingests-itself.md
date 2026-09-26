@@ -64,3 +64,10 @@ names one along the way.
   recent thousand; older ones are covered by layers 2 and 4.
 - Extraction is pinned to one working directory, so a manually invoked extractor
   writes its transcripts there too, not into the repository it was invoked from.
+
+**Update (2026-09-26):** layers 1 and 2 are removed. Since ADR 0012 extraction calls
+Bedrock directly and makes no Claude Code session, so nothing adds an identifier or a
+transcript to the fixed directory. The twelve transcripts that directory held (all from the
+2026-08-31 backfill, every one opening with the extraction prompt, none cited by a fact) were
+deleted with the code that guarded them. Layer 4, the content check, stays for the older
+transcripts scattered across other project directories.

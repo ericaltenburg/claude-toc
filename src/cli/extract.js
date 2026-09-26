@@ -49,13 +49,13 @@ function hasUnreadTranscript(session, state) {
 
 // Every command below reads the one list of known sessions, the same list the sweep reads, so
 // a session a sweep would take is one a person can list, name and retry (ADR 0017).
-function everyKnownSession(config, state) {
-  return [...knownSessions(config, { recorded: state.snapshot() })];
+function everyKnownSession(config) {
+  return [...knownSessions(config)];
 }
 
-function sessionsMatching(config, state, prefix) {
+function sessionsMatching(config, prefix) {
   const where = (known) => known.session_id.startsWith(prefix);
-  return [...knownSessions(config, { recorded: state.snapshot(), where })];
+  return [...knownSessions(config, { where })];
 }
 
 function listSessions(sessions, state) {
@@ -114,7 +114,7 @@ function retry(config, state, prefix, callModel) {
     return 2;
   }
 
-  const chosen = sessionsMatching(config, state, prefix);
+  const chosen = sessionsMatching(config, prefix);
   if (!chosen.length) {
     console.log(`No session matching "${prefix}"`);
     return 1;
@@ -155,14 +155,14 @@ function run(argv, callModel) {
   }
 
   if (!arg) {
-    listSessions(everyKnownSession(config, state), state);
+    listSessions(everyKnownSession(config), state);
     return 0;
   }
 
   const chosen =
     arg === "--all"
-      ? sessionsWithUnreadTranscript(everyKnownSession(config, state), state)
-      : sessionsMatching(config, state, arg);
+      ? sessionsWithUnreadTranscript(everyKnownSession(config), state)
+      : sessionsMatching(config, arg);
 
   if (!chosen.length) {
     console.log(arg === "--all" ? "Nothing unread to extract." : `No session matching "${arg}"`);

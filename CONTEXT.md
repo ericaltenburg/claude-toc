@@ -52,8 +52,10 @@ currency is judged.
 ## Corpus
 
 Every topic file, plus the table of contents describing them. Lives outside this
-repo at `~/.claude/claude-toc/`. The corpus is the source of truth and is
-irreplaceable: transcripts rotate away, so a lost fact cannot be re-extracted.
+repo in `corpus/` under the claude-toc root, `~/.claude/claude-toc/` by default,
+beside the ledgers, settings and cache (ADR 0018). The corpus is the source of
+truth and is irreplaceable: transcripts rotate away, so a lost fact cannot be
+re-extracted.
 
 ## Index
 

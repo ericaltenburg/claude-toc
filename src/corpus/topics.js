@@ -33,7 +33,6 @@ export function createTopicStore(config) {
   }
 
   function saveToc(toc) {
-    mkdirSync(config.corpusDir, { recursive: true });
     writeFileAtomically(config.tocPath, JSON.stringify(toc, null, 2) + "\n");
   }
 

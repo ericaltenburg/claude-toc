@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 
 import { writeFileAtomically } from "../write-atomically.js";
 
@@ -17,7 +17,6 @@ const EMPTY = () => ({
   offsets: {},
   failures: {},
   quarantined: {},
-  extractorSessions: {},
   sweptAt: null,
 });
 
@@ -25,8 +24,9 @@ export function createStateStore(
   config,
   { debounceMs = SWEEP_DEBOUNCE_MS, attemptsBeforeQuarantine = ATTEMPTS_BEFORE_QUARANTINE } = {}
 ) {
-  // A state file written before ADR 0016 still carries an `extraction` lease. Only the fields
-  // named here are read, so it is dropped on load and gone after the next save.
+  // A state file written before ADR 0016 still carries an `extraction` lease, and one written
+  // before the extractor's old transcripts were deleted carries `extractorSessions`. Only the
+  // fields named here are read, so both are dropped on load and gone after the next save.
   function load() {
     if (existsSync(config.statePath)) {
       try {
@@ -37,7 +37,6 @@ export function createStateStore(
           offsets: state.offsets ?? {},
           failures: state.failures ?? {},
           quarantined: state.quarantined ?? {},
-          extractorSessions: state.extractorSessions ?? {},
           sweptAt: state.sweptAt ?? null,
         };
       } catch {
@@ -48,7 +47,6 @@ export function createStateStore(
   }
 
   function save(state) {
-    mkdirSync(config.corpusDir, { recursive: true });
     writeFileAtomically(config.statePath, JSON.stringify(state, null, 2) + "\n");
   }
 
@@ -75,7 +73,6 @@ export function createStateStore(
     const state = load();
     return {
       isQuarantined: (sessionId) => Boolean(state.quarantined[sessionId]),
-      isExtractorSession: (sessionId) => Boolean(state.extractorSessions[sessionId]),
       extractionOffset: (sessionId) => offsetIn(state, sessionId),
       hasUnreadTurns: (sessionId, size) => transcriptHasUnreadTurns(size, offsetIn(state, sessionId)),
     };

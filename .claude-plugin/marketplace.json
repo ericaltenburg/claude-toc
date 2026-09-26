@@ -1,0 +1,13 @@
+{
+  "name": "claude-toc",
+  "description": "The claude-toc plugin, served in place from this repository.",
+  "owner": {
+    "name": "Eric Altenburg"
+  },
+  "plugins": [
+    {
+      "name": "claude-toc",
+      "source": "./"
+    }
+  ]
+}

@@ -13,23 +13,32 @@ import { dirname, join } from "node:path";
 import { createConfig } from "../../src/config.js";
 
 export const REPO_ROOT = join(import.meta.dirname, "..", "..");
-export const LOGGER_HOOK = join(REPO_ROOT, "hooks", "toc-logger.mjs");
-export const SWEEP_HOOK = join(REPO_ROOT, "hooks", "toc-sweep.mjs");
+export const PROMPT_HOOK = join(REPO_ROOT, "hooks", "toc-prompt.mjs");
 export const EXTRACTOR = join(REPO_ROOT, "bin", "toc-extract");
 export const SPEND_REPORT = join(REPO_ROOT, "bin", "toc-spend");
 export const STATUS_REPORT = join(REPO_ROOT, "bin", "toc-status");
+export const LAUNCHER = join(REPO_ROOT, "scripts", "node");
 
+// A root laid out as an install that has already run: each group directory exists, so a test
+// can write a fixture straight to a config path. Remove config.corpusDir to start from nothing.
 export function tempCorpus() {
   const root = mkdtempSync(join(tmpdir(), "claude-toc-"));
   const config = createConfig(
     {
-      corpusDir: join(root, "corpus"),
+      corpusDir: join(root, "claude-toc"),
       transcriptsDir: join(root, "projects"),
       promptLog: join(root, "history.jsonl"),
     },
     {}
   );
-  mkdirSync(config.corpusDir, { recursive: true });
+  for (const oneFileInEachGroup of [
+    config.tocPath,
+    config.statePath,
+    config.smokeQueriesPath,
+    config.indexPath,
+  ]) {
+    mkdirSync(dirname(oneFileInEachGroup), { recursive: true });
+  }
   mkdirSync(config.transcriptsDir, { recursive: true });
   writeFileSync(config.promptLog, "");
   return config;
@@ -75,7 +84,7 @@ export function topicPath(config, id) {
 }
 
 export function writeSmokeQueries(config, queries) {
-  mkdirSync(config.corpusDir, { recursive: true });
+  mkdirSync(dirname(config.smokeQueriesPath), { recursive: true });
   writeFileSync(config.smokeQueriesPath, JSON.stringify({ queries }, null, 2));
 }
 

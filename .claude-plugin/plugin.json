@@ -1,0 +1,9 @@
+{
+  "name": "claude-toc",
+  "version": "0.1.0",
+  "description": "Session memory for Claude Code: records each session, distils idle ones into dated facts, and searches them and your prompt history with toc-search.",
+  "author": {
+    "name": "Eric Altenburg"
+  },
+  "repository": "https://github.com/ericaltenburg/claude-toc"
+}
