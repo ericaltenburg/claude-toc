@@ -75,3 +75,16 @@ test("the summary describes the topic's subject, and a reused candidate keeps it
   assert.match(prompt, /topic\.summary: one sentence describing the subject the topic covers/);
   assert.match(prompt, /return that candidate's summary unchanged/);
 });
+
+// A hand-classified sample of the corpus found only about 63% of Decisions were settled choices,
+// the rest intentions and session narrative, and the same working-style preferences recurring
+// across 11 topics. Each rule below answers one of those.
+test("a decision is a settled outcome, and narrative and working-style preferences are not facts", () => {
+  const prompt = buildExtractPrompt();
+
+  assert.match(prompt, /decisions: settled outcomes only/);
+  assert.match(prompt, /A plan, an intention or a pending item is not a decision/);
+  assert.doesNotMatch(prompt, /"will /i, "an example that is an intention teaches intentions");
+  assert.match(prompt, /record the durable fact itself/);
+  assert.match(prompt, /those live in the user's CLAUDE\.md/);
+});
