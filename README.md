@@ -211,13 +211,15 @@ not in the repo, because its queries name your topics.
 ## Cost
 
 Search is free. Extraction is billed to your AWS profile, and every call is logged with its
-tokens, so `toc-spend` and `toc-status` show what it cost. Dollars are an estimate from list
-prices; tokens are exact.
+tokens, so `toc-spend` and `toc-status` show what it cost. Dollars are an estimate from
+Anthropic's first-party list prices; Bedrock is priced separately, so `model-rates.json` is where
+to match your bill. Tokens are exact.
 
 On the author's corpus, extraction cost about **$0.086 per unread megabyte of transcript**
 ([ADR 0013](docs/adr/0013-the-backfill-was-a-one-off.md)). The first month came to about **$28
 over 217 model calls**. About $12 of that was one day working through the backlog, and ordinary
-use since has run well under a dollar a day.
+use since has run well under a dollar a day. Those figures were priced at the list rates of the
+time, which have since come down.
 
 ## Design
 
