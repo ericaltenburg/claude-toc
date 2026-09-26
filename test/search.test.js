@@ -334,13 +334,17 @@ test("the index still refreshes after the sql escape hatch refused a write", () 
   });
 });
 
-test("read-only database access is pre-authorised in settings", () => {
+test("read-only database access is pre-authorised in settings and by the skill", () => {
   const settings = JSON.parse(
     readFileSync(join(REPO_ROOT, ".claude", "settings.json"), "utf-8")
   );
   assert.ok(
-    settings.permissions.allow.includes("Bash($CLAUDE_TOC_HOME/bin/toc-search:*)"),
+    settings.permissions.allow.includes("Bash(toc-search:*)"),
     "the read path's command must be pre-authorised, or automatic search stalls on a prompt"
+  );
+  assert.match(
+    readFileSync(join(REPO_ROOT, "skills", "toc-search", "SKILL.md"), "utf-8"),
+    /^allowed-tools: Bash\(toc-search:\*\)$/m
   );
 });
 
