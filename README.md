@@ -69,8 +69,10 @@ claude plugin marketplace add ericaltenburg/claude-toc    # or the path to a loc
 claude plugin install claude-toc@claude-toc
 ```
 
-Installing copies the plugin into `~/.claude/plugins/cache/`, so edits to a clone are not
-live. Run `claude plugin update claude-toc@claude-toc` and restart to pick up a new version.
+Installed from a local clone, the plugin loads in place, so an edit there is live on
+`/reload-plugins` or the next session. Installed from GitHub, it runs from a copy under
+`~/.claude/plugins/cache/`: run `claude plugin update claude-toc@claude-toc` and restart to pick
+up a new version.
 
 **Then merge this into `~/.claude/settings.json`:**
 

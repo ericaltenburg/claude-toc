@@ -170,24 +170,23 @@ say so: that is the signal the list is too narrow.
 
 ## Installing
 
-This skill, the `toc-*` commands and the prompt hook are one plugin, `claude-toc`,
-loaded in place from its repository, so an edit there is live on `/reload-plugins`.
-Merge this into `~/.claude/settings.json`, with `path` set to the repository:
+This skill, the `toc-*` commands and the prompt hook are one plugin, `claude-toc`.
+Register the repository as a marketplace and install from it:
 
-```json
-{
-  "extraKnownMarketplaces": {
-    "claude-toc": {
-      "source": { "source": "directory", "path": "/path/to/claude-toc" }
-    }
-  },
-  "enabledPlugins": { "claude-toc@claude-toc": true },
-  "permissions": { "allow": ["Bash(toc-search:*)"] }
-}
+```sh
+claude plugin marketplace add /path/to/claude-toc
+claude plugin install claude-toc@claude-toc
 ```
 
-The first two register the repository as a marketplace and enable the plugin from
-it. The permission pre-authorises the read path in every turn: this skill's
+Declaring the marketplace in `settings.json` alone does not install it. Installed from
+a local directory the plugin loads in place, so an edit there is live on
+`/reload-plugins`. Then add the permission to `~/.claude/settings.json`:
+
+```json
+{ "permissions": { "allow": ["Bash(toc-search:*)"] } }
+```
+
+The permission pre-authorises the read path in every turn: this skill's
 `allowed-tools` covers only the turn that invokes it, and an automatic search in a
 later turn would stall on a permission prompt. Run the command bare, as
 `toc-search`, so the rule matches.
