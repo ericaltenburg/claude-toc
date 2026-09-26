@@ -89,7 +89,7 @@ test("a first run from an empty root files each write under corpus, ledger or ca
     { role: "assistant", text: "in dynamodb, keyed by show id" },
   ]);
 
-  runNode(LOGGER_HOOK, {
+  runNode(PROMPT_HOOK, {
     input: sessionPayload(config, { session_id: session, transcript_path: transcript }),
     config,
   });
