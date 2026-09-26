@@ -2,6 +2,14 @@ import { readFileSync, mkdirSync, existsSync, renameSync } from "fs";
 import { join } from "path";
 
 import { writeFileAtomically } from "../write-atomically.js";
+import {
+  factLine,
+  factLinesIn,
+  newSection,
+  newTopicFile,
+  sectionBlock,
+  SECTIONS,
+} from "./format.js";
 
 export function createTopicStore(config) {
   const topicPath = (topicId) => join(config.topicsDir, `${topicId}.md`);
@@ -47,8 +55,7 @@ export function createTopicStore(config) {
     const topicFile = topicPath(id);
     if (existsSync(topicFile)) return;
 
-    const headings = SECTIONS.map((section) => `## ${section}\n`).join("\n");
-    writeFileAtomically(topicFile, `# ${id.replace(/_/g, " ")}\n\n${headings}`);
+    writeFileAtomically(topicFile, newTopicFile(id));
   }
 
   // --- Topic file operations ---
@@ -69,7 +76,7 @@ export function createTopicStore(config) {
     const block = sectionBlock(content, section);
 
     if (!block) {
-      writeFileAtomically(topicFile, `${content}\n## ${section}\n\n${line}`);
+      writeFileAtomically(topicFile, content + newSection(section, line));
     } else if (isDuplicateFact(block.text, factText)) {
       return;
     } else {
@@ -91,9 +98,7 @@ export function createTopicStore(config) {
   function countEntries(topicId) {
     const topicFile = topicPath(topicId);
     if (!existsSync(topicFile)) return 0;
-    return readFileSync(topicFile, "utf-8")
-      .split("\n")
-      .filter((l) => l.startsWith("- ")).length;
+    return factLinesIn(readFileSync(topicFile, "utf-8")).length;
   }
 
   // --- Similarity ---
@@ -158,8 +163,8 @@ export function createTopicStore(config) {
     for (const section of SECTIONS) {
       const block = sectionBlock(loserContent, section);
       if (!block) continue;
-      for (const fact of factLines(block.text)) {
-        appendFactLine(winnerId, section, `- ${fact}\n`, withoutAttribution(fact));
+      for (const fact of factLinesIn(block.text)) {
+        appendFactLine(winnerId, section, fact.line, fact.text);
       }
     }
   }
@@ -207,15 +212,7 @@ export function createTopicStore(config) {
   };
 }
 
-const SECTIONS = ["Context", "Decisions"];
 const MERGED_TOMBSTONE = ".merged.md";
-const SESSION_ID_LENGTH_ON_A_FACT = 8;
-
-function factLine(entry, sessionId, whenTheConversationHappened) {
-  const date = whenTheConversationHappened ?? new Date().toISOString().slice(0, 10);
-  const session = sessionId?.slice(0, SESSION_ID_LENGTH_ON_A_FACT) || "unknown";
-  return `- ${entry} [session:${session}, ${date}]\n`;
-}
 
 function union(a, b) {
   return [...new Set([...a, ...b])];
@@ -229,36 +226,13 @@ function tombstone(loserPath) {
   renameSync(loserPath, loserPath.replace(/\.md$/, MERGED_TOMBSTONE));
 }
 
-function sectionBlock(content, section) {
-  const idx = content.indexOf(`## ${section}`);
-  if (idx === -1) return null;
-  const start = content.indexOf("\n", idx) + 1;
-  const nextSection = content.indexOf("\n## ", start);
-  const end = nextSection === -1 ? content.length : nextSection;
-  return { text: content.slice(start, end), end };
-}
-
-function factLines(sectionText) {
-  return sectionText
-    .split("\n")
-    .filter((l) => l.startsWith("- "))
-    .map((l) => l.replace(/^- /, ""));
-}
-
-// A fact's own words, with the session and date it came from taken off the end. Two facts are
-// compared by what they say, never by where they came from.
-function withoutAttribution(fact) {
-  return fact.replace(/ \[session:.*\]$/, "").replace(/ \[\d{4}-\d{2}-\d{2}\]$/, "");
-}
-
 // A fact stating a number the existing one lacks is an update, not a rewording. Changing
 // 264,000 to 400,000 leaves the word overlap near 0.9, so without this the corpus would keep
 // the stale value and silently drop the current one.
 function isDuplicateFact(sectionText, entry) {
   const newWords = normalize(entry);
   const newNumbers = [...numbersIn(entry)];
-  for (const fact of factLines(sectionText)) {
-    const said = withoutAttribution(fact);
+  for (const { text: said } of factLinesIn(sectionText)) {
     const saidNumbers = numbersIn(said);
     if (newNumbers.some((number) => !saidNumbers.has(number))) continue;
     if (said.includes(entry.slice(0, 60))) return true;

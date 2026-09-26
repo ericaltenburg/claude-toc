@@ -1,7 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseFactLine, parseTopic } from "../src/corpus/format.js";
+import {
+  factLine,
+  factLinesIn,
+  newTopicFile,
+  parseFactLine,
+  parseTopic,
+} from "../src/corpus/format.js";
 
 test("parses a fact carrying a session and a date", () => {
   const fact = parseFactLine("- Project uses Brazil build system [session:316972f2, 2026-05-12]");
@@ -112,4 +118,46 @@ test("keeps facts from a section other than Context or Decisions", () => {
   assert.deepEqual(parseTopic(markdown).map((f) => [f.section, f.text]), [
     ["Notes", "kept anyway"],
   ]);
+});
+
+// --- Round trip ---
+
+const A_SESSION = "316972f2-1111-2222-3333-444455556666";
+
+// #23 lived between the writer and the reader: a line the topic store wrote was read back by
+// patterns the store did not share, and nothing checked the two agreed.
+test("a fact line the writer produces reads back as the text, session and date it was written from", () => {
+  const written = [
+    ["Project uses Brazil build system", A_SESSION, "316972f2"],
+    ["Ticket tripped by [ERROR] lines in EU logs", A_SESSION, "316972f2"],
+    ["Alarm fired 07:25-08:03 UTC only [unverified]", A_SESSION, "316972f2"],
+    ["Released on [2026-01-01] behind a flag", A_SESSION, "316972f2"],
+    ["Clipboard mangles “smart quotes” and — dashes", A_SESSION, "316972f2"],
+    ["A fact whose session was never known", null, "unknown"],
+  ];
+
+  for (const [text, sessionId, session] of written) {
+    const [fact] = parseTopic(`## Context\n${factLine(text, sessionId, "2026-05-12")}`);
+
+    assert.deepEqual(
+      { text: fact.text, session: fact.session, date: fact.date },
+      { text, session, date: "2026-05-12" },
+      text
+    );
+  }
+});
+
+test("a fact line is carried as written and compared by its words alone", () => {
+  const line = factLine("Variants are keyed by show id", A_SESSION, "2026-05-12");
+
+  assert.deepEqual(factLinesIn(`## Context\n${line}\n## Decisions\n`), [
+    { line, text: "Variants are keyed by show id" },
+  ]);
+});
+
+test("a new topic file carries a heading for each section and no facts", () => {
+  const skeleton = newTopicFile("alcs_broadcast_variants");
+
+  assert.equal(skeleton, "# alcs broadcast variants\n\n## Context\n\n## Decisions\n");
+  assert.deepEqual(parseTopic(skeleton), []);
 });
