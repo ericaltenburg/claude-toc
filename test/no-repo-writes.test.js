@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { createTopicStore } from "../src/corpus/topics.js";
 import { createStateStore } from "../src/sessions/progress.js";
-import { openIndex } from "../src/search-index.js";
+import { openIndex } from "../src/index/open.js";
 import {
   tempCorpus,
   runNode,

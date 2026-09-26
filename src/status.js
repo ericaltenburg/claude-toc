@@ -4,7 +4,7 @@ import { createExtractionLock } from "./extract/lock.js";
 import { dollars, thousands } from "./numbers.js";
 import { localDateParts } from "./local-time.js";
 import { createSearch, searchLogEntries, SOURCES } from "./search.js";
-import { openIndex } from "./search-index.js";
+import { openIndex } from "./index/open.js";
 import { createSpendLog, UNDATED } from "./extract/spend.js";
 import { createStateStore } from "./sessions/progress.js";
 import { createSweeper } from "./extract/sweep.js";

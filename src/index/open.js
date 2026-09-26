@@ -13,12 +13,12 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 
-import { parseTopic } from "./corpus/format.js";
-import { createTopicStore } from "./corpus/topics.js";
-import { parseJsonLine } from "./json-lines.js";
-import { localDateParts } from "./local-time.js";
-import { createStateStore } from "./sessions/progress.js";
-import { parseSessionRecord } from "./sessions/registry.js";
+import { parseTopic } from "../corpus/format.js";
+import { createTopicStore } from "../corpus/topics.js";
+import { parseJsonLine } from "../json-lines.js";
+import { localDateParts } from "../local-time.js";
+import { createStateStore } from "../sessions/progress.js";
+import { parseSessionRecord } from "../sessions/registry.js";
 
 export const SCHEMA_VERSION = 1;
 
