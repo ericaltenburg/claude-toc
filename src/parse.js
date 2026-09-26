@@ -1,4 +1,7 @@
-const FACT_WITH_SESSION = /^(.*?)\s*\[session:([^\s,\]]+),\s*(\d{4}-\d{2}-\d{2})\]$/;
+import { parseJsonLine } from "./json-lines.js";
+import { localDateParts } from "./local-time.js";
+
+const FACT_WITH_SESSION =/^(.*?)\s*\[session:([^\s,\]]+),\s*(\d{4}-\d{2}-\d{2})\]$/;
 const FACT_WITH_DATE = /^(.*?)\s*\[(\d{4}-\d{2}-\d{2})\]$/;
 
 export function parseFactLine(line) {
@@ -40,47 +43,6 @@ export function parseTopic(markdown) {
   }
 
   return facts;
-}
-
-const formatters = new Map();
-
-function formatter(timeZone) {
-  const key = timeZone ?? "";
-  let existing = formatters.get(key);
-  if (!existing) {
-    existing = new Intl.DateTimeFormat("en-CA", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23",
-    });
-    formatters.set(key, existing);
-  }
-  return existing;
-}
-
-export function localDateParts(ms, timeZone) {
-  const parts = {};
-  for (const { type, value } of formatter(timeZone).formatToParts(ms)) {
-    parts[type] = value;
-  }
-  return {
-    date: `${parts.year}-${parts.month}-${parts.day}`,
-    time: `${parts.hour}:${parts.minute}:${parts.second}`,
-  };
-}
-
-export function parseJsonLine(line) {
-  try {
-    const record = JSON.parse(line);
-    return record && typeof record === "object" ? record : null;
-  } catch {
-    return null;
-  }
 }
 
 export function parsePromptRecord(line, timeZone) {

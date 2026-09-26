@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 
-import { parseJsonLine } from "./parse.js";
+import { parseJsonLine } from "./json-lines.js";
 import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
 import { createStateStore } from "./state.js";
 

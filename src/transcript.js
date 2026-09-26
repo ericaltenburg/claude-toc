@@ -10,7 +10,7 @@ import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
 import { EXTRACTION_PROMPT_MARKER } from "./extract-prompt.js";
-import { parseJsonLine } from "./parse.js";
+import { parseJsonLine } from "./json-lines.js";
 import { START_OF_TRANSCRIPT } from "./state.js";
 
 const NEWLINE = 0x0a;
