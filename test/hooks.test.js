@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { createExtractionLock } from "../src/extraction-lock.js";
+import { createExtractionLock } from "../src/extract/lock.js";
 import {
   fakeExtractor,
   idleFor,

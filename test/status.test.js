@@ -11,10 +11,10 @@ import {
 } from "../src/status.js";
 import { renderStatus } from "../src/cli/status.js";
 import { SOURCES } from "../src/search.js";
-import { createSpendLog } from "../src/spend.js";
-import { createExtractionLock, EXTRACTION_LOCK_IS_STALE_AFTER_MS } from "../src/extraction-lock.js";
+import { createSpendLog } from "../src/extract/spend.js";
+import { createExtractionLock, EXTRACTION_LOCK_IS_STALE_AFTER_MS } from "../src/extract/lock.js";
+import { SESSION_IS_IDLE_AFTER_MS } from "../src/extract/sweep.js";
 import { createStateStore } from "../src/sessions/progress.js";
-import { SESSION_IS_IDLE_AFTER_MS } from "../src/sweep.js";
 import { EXTRACTION_PROMPT_MARKER } from "../src/sessions/transcript.js";
 import {
   appendPrompts,

@@ -1,14 +1,14 @@
 import { existsSync } from "node:fs";
 
+import { createTopicStore } from "../corpus/topics.js";
+import { localDateParts } from "../local-time.js";
+import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "../search-index.js";
+import { recordedProjectsUnder, salientTermsQuery } from "../search.js";
+import { createStateStore } from "../sessions/progress.js";
+import { chunkTurns, unreadSlice } from "../sessions/transcript.js";
 import { createModelCall } from "./bedrock.js";
-import { buildExtractPrompt, MalformedOutput, parseModelOutput } from "./extract-prompt.js";
-import { localDateParts } from "./local-time.js";
-import { openIndex, SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "./search-index.js";
-import { recordedProjectsUnder, salientTermsQuery } from "./search.js";
-import { createStateStore } from "./sessions/progress.js";
-import { chunkTurns, unreadSlice } from "./sessions/transcript.js";
+import { buildExtractPrompt, MalformedOutput, parseModelOutput } from "./prompt.js";
 import { createSpendLog } from "./spend.js";
-import { createTopicStore } from "./corpus/topics.js";
 
 export const CANDIDATE_TOPICS_IN_A_PROMPT = 10;
 export const KNOWN_FACTS_IN_A_PROMPT = 20;

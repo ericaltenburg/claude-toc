@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 
-import { createModelCall, BEDROCK_MESSAGES_VERSION } from "../src/bedrock.js";
-import { createSpendLog } from "../src/spend.js";
+import { createModelCall, BEDROCK_MESSAGES_VERSION } from "../src/extract/bedrock.js";
+import { createSpendLog } from "../src/extract/spend.js";
 import { tempCorpus } from "./support/corpus.js";
 
 const MODEL = "global.anthropic.claude-sonnet-5";

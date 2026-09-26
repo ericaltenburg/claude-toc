@@ -5,7 +5,7 @@ import { existsSync, statSync } from "node:fs";
 import {
   createExtractionLock,
   EXTRACTION_LOCK_IS_STALE_AFTER_MS,
-} from "../src/extraction-lock.js";
+} from "../src/extract/lock.js";
 import { idleFor, tempCorpus } from "./support/corpus.js";
 
 const A_MINUTE = 60_000;

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { appendFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 
-import { createExtractor, SAME_SESSION_FACTS_IN_A_PROMPT } from "../src/extract.js";
+import { createExtractor, SAME_SESSION_FACTS_IN_A_PROMPT } from "../src/extract/extractor.js";
 import { createSearch } from "../src/search.js";
 import { createStateStore } from "../src/sessions/progress.js";
 import {

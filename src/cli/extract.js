@@ -2,11 +2,11 @@ import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 
 import { createConfig } from "../config.js";
-import { bedrockBilledToOurOwnProfile, createExtractor } from "../extract.js";
-import { createExtractionLock } from "../extraction-lock.js";
+import { bedrockBilledToOurOwnProfile, createExtractor } from "../extract/extractor.js";
+import { createExtractionLock } from "../extract/lock.js";
 import { createStateStore, transcriptHasUnreadTurns } from "../sessions/progress.js";
 import { indexedSessions } from "../sessions/registry.js";
-import { createSweeper } from "../sweep.js";
+import { createSweeper } from "../extract/sweep.js";
 import { createTopicStore } from "../corpus/topics.js";
 
 // A retried session is chunked smaller than a swept one: the retry exists because something

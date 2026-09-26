@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildExtractPrompt, parseModelOutput } from "../src/extract-prompt.js";
+import { buildExtractPrompt, parseModelOutput } from "../src/extract/prompt.js";
 import { EXTRACTION_PROMPT_MARKER } from "../src/sessions/transcript.js";
 
 test("parseModelOutput keeps a skip and rejects a plausible-looking non-result", () => {

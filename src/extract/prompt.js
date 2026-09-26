@@ -2,7 +2,7 @@
 // parser that reads that shape back. They are two halves of one agreement, so they change
 // together and live together.
 
-import { EXTRACTION_PROMPT_MARKER } from "./sessions/transcript.js";
+import { EXTRACTION_PROMPT_MARKER } from "../sessions/transcript.js";
 
 // The prompt's opening words are also how a transcript is recognised as the extractor's own,
 // per ADR 0011. The transcript reader owns them, since it is the one that has to recognise

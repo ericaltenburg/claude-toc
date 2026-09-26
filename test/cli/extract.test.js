@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { existsSync, statSync } from "node:fs";
 
 import { renewingBeforeEachCall } from "../../src/cli/extract.js";
-import { createExtractionLock } from "../../src/extraction-lock.js";
-import { createExtractor } from "../../src/extract.js";
+import { createExtractor } from "../../src/extract/extractor.js";
+import { createExtractionLock } from "../../src/extract/lock.js";
 import { EXTRACTOR, idleFor, runCli, tempCorpus, writeTranscript } from "../support/corpus.js";
 
 const A_MINUTE = 60_000;
