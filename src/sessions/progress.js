@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 
 import { writeFileAtomically } from "../write-atomically.js";
 
@@ -48,7 +48,6 @@ export function createStateStore(
   }
 
   function save(state) {
-    mkdirSync(config.corpusDir, { recursive: true });
     writeFileAtomically(config.statePath, JSON.stringify(state, null, 2) + "\n");
   }
 

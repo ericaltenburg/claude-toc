@@ -1,4 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import { parseJsonLine } from "../json-lines.js";
 import { localDateParts } from "../local-time.js";
@@ -11,7 +12,7 @@ export const LIST_RATES_PER_MILLION_TOKENS = {
 export function createSpendLog(config, { timeZone, now = () => Date.now() } = {}) {
   function record({ model, sessionId = null, inputTokens = 0, outputTokens = 0, stopReason = null }) {
     const at = now();
-    mkdirSync(config.corpusDir, { recursive: true });
+    mkdirSync(dirname(config.spendLogPath), { recursive: true });
     appendFileSync(
       config.spendLogPath,
       JSON.stringify({

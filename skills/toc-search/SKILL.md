@@ -139,9 +139,9 @@ toc-search --sql "select date, topic, text from facts
 
 ## Logging
 
-Every search appends one line to `search.log` in the corpus: timestamp, query,
-row count, mode, the project it was scoped to, and its source: `explicit`,
-`automatic`, or `smoke`. Source is what separates a trigger that fired from a
+Every search appends one line to `ledger/search.log` under the claude-toc root
+(`~/.claude/claude-toc` by default): timestamp, query, row count, mode, the
+project it was scoped to, and its source: `explicit`, `automatic`, or `smoke`. Source is what separates a trigger that fired from a
 question a person typed, so an unrecognised `--source` is refused. This is the
 instrumentation whose absence let a dead code path survive four months unnoticed,
 and it is the evidence for widening the trigger list. Do not add a way to search
@@ -179,5 +179,5 @@ own: PATH, then the newest nvm install, then Homebrew. To pin one, set
 `CLAUDE_TOC_NODE` under `env`; one that is too old is an error, not skipped.
 
 `--smoke` is the check that all of the above still works. Its queries name real
-topics, so they live with the corpus at `smoke-queries.json`, not in the public
-repository.
+topics, so they live beside the corpus at `config/smoke-queries.json` under the
+claude-toc root, not in the public repository.

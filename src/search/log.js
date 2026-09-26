@@ -3,6 +3,7 @@
 // reads it, so its shape lives in neither.
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import { parseJsonLine } from "../json-lines.js";
 
@@ -13,7 +14,7 @@ export function logSearchBestEffort(
   { query, mode, rows, source, project, allProjects, fellBackFrom }
 ) {
   try {
-    mkdirSync(config.corpusDir, { recursive: true });
+    mkdirSync(dirname(config.searchLogPath), { recursive: true });
     appendFileSync(
       config.searchLogPath,
       `${JSON.stringify({

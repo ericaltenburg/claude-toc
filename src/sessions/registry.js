@@ -4,6 +4,7 @@
 // (ADR 0013).
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import { parseJsonLine } from "../json-lines.js";
 
@@ -25,7 +26,7 @@ export function alreadyIndexed(config, sessionId) {
 }
 
 export function recordSession(config, { sessionId, transcript, project, started }) {
-  mkdirSync(config.corpusDir, { recursive: true });
+  mkdirSync(dirname(config.sessionIndexPath), { recursive: true });
   appendFileSync(
     config.sessionIndexPath,
     JSON.stringify({
