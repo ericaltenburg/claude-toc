@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { createTopicStore } from "../src/toc.js";
+import { createTopicStore } from "../src/corpus/topics.js";
 import { createStateStore } from "../src/sessions/progress.js";
 import { openIndex } from "../src/search-index.js";
 import {

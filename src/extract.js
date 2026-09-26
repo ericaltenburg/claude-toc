@@ -8,7 +8,7 @@ import { recordedProjectsUnder, salientTermsQuery } from "./search.js";
 import { createStateStore } from "./sessions/progress.js";
 import { chunkTurns, unreadSlice } from "./sessions/transcript.js";
 import { createSpendLog } from "./spend.js";
-import { createTopicStore } from "./toc.js";
+import { createTopicStore } from "./corpus/topics.js";
 
 export const CANDIDATE_TOPICS_IN_A_PROMPT = 10;
 export const KNOWN_FACTS_IN_A_PROMPT = 20;
@@ -153,7 +153,7 @@ export function createExtractor(
     return { candidates, knownFacts };
   }
 
-  // A fact carries a truncated session id (toc.js), so it matches as a prefix of the full one,
+  // A fact carries a truncated session id (corpus/topics.js), so it matches as a prefix of the full one,
   // the same way SESSION_STARTS_WITH_THE_FACTS_PREFIX joins the two.
   function factsAlreadyExtractedFrom(sessionId) {
     return db

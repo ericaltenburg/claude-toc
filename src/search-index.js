@@ -16,7 +16,7 @@ import { basename, join } from "node:path";
 import { parsePromptRecord, parseTopic } from "./parse.js";
 import { createStateStore } from "./sessions/progress.js";
 import { parseSessionRecord } from "./sessions/registry.js";
-import { createTopicStore } from "./toc.js";
+import { createTopicStore } from "./corpus/topics.js";
 
 export const SCHEMA_VERSION = 1;
 

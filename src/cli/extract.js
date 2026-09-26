@@ -7,7 +7,7 @@ import { createExtractionLock } from "../extraction-lock.js";
 import { createStateStore, transcriptHasUnreadTurns } from "../sessions/progress.js";
 import { indexedSessions } from "../sessions/registry.js";
 import { createSweeper } from "../sweep.js";
-import { createTopicStore } from "../toc.js";
+import { createTopicStore } from "../corpus/topics.js";
 
 // A retried session is chunked smaller than a swept one: the retry exists because something
 // about the session failed, and a smaller slice is the cheapest thing to vary.

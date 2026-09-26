@@ -1,7 +1,7 @@
 import { readFileSync, mkdirSync, existsSync, renameSync } from "fs";
 import { join } from "path";
 
-import { writeFileAtomically } from "./write-atomically.js";
+import { writeFileAtomically } from "../write-atomically.js";
 
 export function createTopicStore(config) {
   const topicPath = (topicId) => join(config.topicsDir, `${topicId}.md`);
