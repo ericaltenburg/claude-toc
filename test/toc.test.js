@@ -141,7 +141,7 @@ test("a number written another way is the same number, so the fact is still a du
 });
 
 test("the TOC counts the facts a topic holds", () => {
-  const { config, store } = storeWith({
+  const { store } = storeWith({
     brazil: { summary: "the build system", context: ["a", "b"], decisions: ["c"] },
   });
 
