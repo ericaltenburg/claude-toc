@@ -112,3 +112,17 @@ after every topic is written.
   was, and the marker says it no longer stands.
 - `--sql` users see two more columns on `facts`, and a query that wants current facts only
   filters on `superseded_date is null`.
+
+**Update (2026-09-26):** the existing corpus was back-filled once after all, by one-off scripts
+that were not kept, as with ADR 0013's repair. Claude Opus 5.5 at `xhigh` effort read every
+topic whole and proposed 436 supersessions. A second, blind pass kept only pairs where
+everything the old fact said had changed, confirming 187. That rule left reversed decisions
+current whenever their rationale still held, so a third pass re-judged the 249 it rejected by
+the fact's main point. It confirmed 192, of which three were dropped on review because an
+independent claim in them still held. 376 facts across 26 topics are now marked. Point-in-time
+readings and standalone truths such as platform constraints and root causes stay current. The
+same pass rewrote all 74 topic summaries to describe their subject rather than their last
+session. Each apply was checked against a snapshot: every original line intact apart from its
+marker, fact counts unchanged, and `toc.json` changed in summaries only. It took 127 model calls,
+about 759K tokens in and 384K out. Gotchas and Open were not back-filled: old facts keep their
+sections, and new extractions fill the new ones.

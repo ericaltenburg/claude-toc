@@ -2,7 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 
-import { createSpendLog, estimatedCost, summarizeSpend } from "../src/extract/spend.js";
+import {
+  createSpendLog,
+  estimatedCost,
+  summarizeSpend,
+  LIST_RATES_PER_MILLION_TOKENS,
+} from "../src/extract/spend.js";
+import { dollars } from "../src/numbers.js";
 import {
   runCli,
   tempCorpus,
@@ -27,9 +33,9 @@ function callOf(overrides = {}) {
 }
 
 test("a million input tokens of sonnet costs its list rate", () => {
-  const cost = estimatedCost(callOf({ outputTokens: 0 }), { [SONNET]: { input: 3, output: 15 } });
+  const cost = estimatedCost(callOf({ outputTokens: 0 }), LIST_RATES_PER_MILLION_TOKENS);
 
-  assert.equal(cost, 3);
+  assert.equal(cost, LIST_RATES_PER_MILLION_TOKENS[SONNET].input);
 });
 
 test("a model with no known rate is counted in tokens but not in dollars", () => {
@@ -111,7 +117,8 @@ test("toc-spend reports nothing spent before any call, and totals after", () => 
   assert.equal(report.status, 0);
   assert.equal(report.stderr, "");
   assert.match(report.stdout, /1 model call\(s\)/);
-  assert.match(report.stdout, /\$4\.50/);
+  const sonnet = LIST_RATES_PER_MILLION_TOKENS[SONNET];
+  assert.ok(report.stdout.includes(dollars(sonnet.input + sonnet.output / 10)));
   assert.match(report.stdout, /claudecode/);
   assert.match(report.stdout, /316972f2/);
 });

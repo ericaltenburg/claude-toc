@@ -4,9 +4,12 @@ import { dirname } from "node:path";
 import { parseJsonLine } from "../json-lines.js";
 import { localDateParts } from "../local-time.js";
 
+// Anthropic's first-party list prices. Bedrock is priced separately, so
+// config/model-rates.json under the claude-toc root overrides these to match a real bill.
 export const LIST_RATES_PER_MILLION_TOKENS = {
-  "global.anthropic.claude-sonnet-5": { input: 3, output: 15 },
-  "global.anthropic.claude-opus-5": { input: 15, output: 75 },
+  "global.anthropic.claude-sonnet-5": { input: 2, output: 10 },
+  "global.anthropic.claude-opus-5": { input: 5, output: 25 },
+  "global.anthropic.claude-opus-5-5": { input: 4, output: 20 },
 };
 
 export function createSpendLog(config, { timeZone, now = () => Date.now() } = {}) {

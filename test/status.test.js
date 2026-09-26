@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 import {
   createStatusReport,
@@ -979,6 +979,12 @@ test("a smoke query the corpus can no longer answer fails the verdict and still 
 
 const SONNET = "global.anthropic.claude-sonnet-5";
 
+// The dollars below test the block, not the shipped table, so they pin their own rate: a
+// million input tokens and a hundred thousand output come to $4.50.
+function pinSonnetRates(config) {
+  writeFileSync(config.modelRatesPath, JSON.stringify({ [SONNET]: { input: 3, output: 15 } }));
+}
+
 function spendBlock(report) {
   const block = report.blocks.find((candidate) => candidate.title === "SPEND");
   assert.ok(block, "the report should carry a SPEND block");
@@ -1010,6 +1016,7 @@ function called({ localDate, model = SONNET, inputTokens = 1_000_000, outputToke
 test("the spend block reports calls and dollars over seven days, thirty days and all time", () => {
   const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
   const config = tempCorpus();
+  pinSonnetRates(config);
   appendCalls(config, [
     called({ localDate: localDay(now, 0) }),
     called({ localDate: localDay(now, 20) }),
@@ -1035,6 +1042,7 @@ test("the spend block is the last block on the report", () => {
 test("calls whose model has no rate are counted per window and left out of the dollars", () => {
   const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
   const config = tempCorpus();
+  pinSonnetRates(config);
   appendCalls(config, [
     called({ localDate: localDay(now, 0), model: "some.unlisted.model" }),
     called({ localDate: localDay(now, 100), model: "some.unlisted.model" }),
@@ -1102,6 +1110,7 @@ test("a malformed line in the spend log is skipped rather than breaking the repo
 test("an amount too small for cents is reported the way the spend report reports it", () => {
   const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
   const config = tempCorpus();
+  pinSonnetRates(config);
   appendCalls(config, [
     called({ localDate: localDay(now, 0), inputTokens: 1_000, outputTokens: 0 }),
   ]);
@@ -1152,6 +1161,7 @@ test("nothing in the spend block reaches the verdict, however much went unpriced
 test("a dollar amount is printed in full and right-aligned against its column's edge", () => {
   const now = AFTERNOON_ON_27_AUGUST_IN_NEW_YORK;
   const config = tempCorpus();
+  pinSonnetRates(config);
   appendCalls(config, [
     called({ localDate: localDay(now, 0), inputTokens: 400_000_000, outputTokens: 0 }),
   ]);
@@ -1163,6 +1173,7 @@ test("a dollar amount is printed in full and right-aligned against its column's 
 
 test("toc-status prints the spend block in the same columns as the search block", () => {
   const config = tempCorpus();
+  pinSonnetRates(config);
   createSpendLog(config).record({
     model: SONNET,
     sessionId: "316972f2",
