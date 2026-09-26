@@ -59,12 +59,24 @@ function listSessions(sessions, state) {
   if (unread.length) console.log(`\nRun the extractor with --all to process them.`);
 }
 
-function reportDedup(config) {
-  const { merges, remaining } = createTopicStore(config).dedupTopics();
+// Merging rewrites and renames corpus files, and the corpus has no backup (ADR 0001), so
+// dedup prints its plan unless it is told to --apply it.
+function reportDedup(config, { apply }) {
+  const { merges, remaining } = createTopicStore(config).dedupTopics({ apply });
   for (const { winnerId, loserId, score } of merges) {
-    console.log(`Merged ${loserId} → ${winnerId} (score: ${score.toFixed(2)})`);
+    const verb = apply ? "Merged" : "Would merge";
+    console.log(`${verb} ${loserId} into ${winnerId} (score: ${score.toFixed(2)})`);
   }
-  console.log(`Merged ${merges.length} topic pair(s). ${remaining} topics remain.`);
+  if (apply) {
+    console.log(`Merged ${merges.length} topic pair(s). ${remaining} topics remain.`);
+  } else if (merges.length) {
+    console.log(
+      `${merges.length} topic pair(s) would merge, leaving ${remaining} topics. ` +
+        `Nothing has changed: rerun with --apply to merge them.`
+    );
+  } else {
+    console.log(`No topic pair is similar enough to merge.`);
+  }
 }
 
 function extractEach(config, sessions, options = {}) {
@@ -104,7 +116,7 @@ function run(argv) {
   const arg = argv[0];
 
   if (arg === "--dedup") {
-    reportDedup(config);
+    reportDedup(config, { apply: argv[1] === "--apply" });
     return 0;
   }
 

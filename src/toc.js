@@ -96,19 +96,16 @@ export function createTopicStore(config) {
 
   // --- Similarity ---
 
-  // `excluding` names a topic the caller does not want back. Extraction asks about an id the
-  // model just proposed and does want itself back when that id already exists, because
-  // reusing the topic is the whole point. Dedup asks about a topic that is in the TOC by
-  // definition, and a topic scores 1.00 against itself, so dedup must exclude it or it only
-  // ever learns that every topic resembles itself.
-  function findSimilarTopic(candidateId, candidateKeywords, { excluding = null } = {}) {
+  // A topic is never similar to itself: it scores 1.00 against its own entry, and until that
+  // entry was skipped dedup learned only that every topic resembles itself and merged nothing.
+  function findSimilarTopic(candidateId, candidateKeywords) {
     const toc = loadToc();
     let best = null;
     const candidateWords = new Set(candidateId.split("_"));
     const candidateKwSet = new Set(candidateKeywords);
 
     for (const [id, topic] of Object.entries(toc.topics)) {
-      if (id === excluding) continue;
+      if (id === candidateId) continue;
       const kwScore = jaccardSimilarity(candidateKwSet, new Set(topic.keywords));
       const idScore = jaccardSimilarity(candidateWords, new Set(id.split("_")));
       const score = 0.7 * kwScore + 0.3 * idScore;
@@ -186,7 +183,7 @@ export function createTopicStore(config) {
         if (merged.has(ids[i])) break;
         if (merged.has(ids[j])) continue;
         const keywords = loadToc().topics[ids[j]].keywords;
-        const match = findSimilarTopic(ids[j], keywords, { excluding: ids[j] });
+        const match = findSimilarTopic(ids[j], keywords);
         if (!match || match.id !== ids[i]) continue;
         const { winnerId, loserId } = pickMergeWinner(ids[i], ids[j]);
         if (apply) mergeTopics(winnerId, loserId);
@@ -227,7 +224,7 @@ function longerSummary(a, b) {
 }
 
 function tombstone(loserPath) {
-  renameSync(loserPath, loserPath.replace(".md", MERGED_TOMBSTONE));
+  renameSync(loserPath, loserPath.replace(/\.md$/, MERGED_TOMBSTONE));
 }
 
 function sectionBlock(content, section) {

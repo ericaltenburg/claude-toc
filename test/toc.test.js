@@ -1,27 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { createConfig } from "../src/config.js";
 import { createTopicStore } from "../src/toc.js";
 import { parseTopic } from "../src/parse.js";
-import { tempCorpus, topicPath } from "./support/corpus.js";
+import { EXTRACTOR, runCli, tempCorpus, topicPath } from "./support/corpus.js";
 
 const A_SESSION = "316972f2-1111-2222-3333-444455556666";
 const HAPPENED_ON = "2026-08-27";
+const ANOTHER_SESSION = "9b1e4c07-aaaa-bbbb-cccc-ddddeeeeffff";
+const AN_EARLIER_DAY = "2026-07-14";
 
-function storeWith(topics) {
-  const config = tempCorpus();
+function storeWith(topics, config = tempCorpus()) {
   const store = createTopicStore(config);
 
-  for (const [id, { keywords = [], summary = "", context = [], decisions = [] }] of Object.entries(
-    topics
-  )) {
+  for (const [
+    id,
+    { keywords = [], summary = "", context = [], decisions = [], session = A_SESSION, date = HAPPENED_ON },
+  ] of Object.entries(topics)) {
     store.upsertTopic(id, { keywords, summary });
-    for (const fact of context) store.appendToTopic(id, "Context", fact, A_SESSION, HAPPENED_ON);
-    for (const fact of decisions) {
-      store.appendToTopic(id, "Decisions", fact, A_SESSION, HAPPENED_ON);
-    }
+    for (const fact of context) store.appendToTopic(id, "Context", fact, session, date);
+    for (const fact of decisions) store.appendToTopic(id, "Decisions", fact, session, date);
   }
 
   return { config, store };
@@ -116,7 +118,7 @@ test("a topic is similar when its keywords and its id overlap enough", () => {
     brazil_build_system: { keywords: ["brazil", "build", "versionset"] },
   });
 
-  const match = store.findSimilarTopic("brazil_build_system", ["brazil", "build", "versionset"]);
+  const match = store.findSimilarTopic("brazil_build_systems", ["brazil", "build", "versionset"]);
   const unrelated = store.findSimilarTopic("kinesis_streams", ["kinesis", "shards"]);
 
   assert.equal(match?.id, "brazil_build_system");
@@ -212,22 +214,73 @@ test("dedup over topics that resemble nothing merges nothing", () => {
   assert.equal(remaining, 2);
 });
 
-// A topic scores 1.00 against itself. Extraction wants that: it asks about the id the model
-// proposed and reusing an existing topic is the point. Dedup cannot use it, which is why it
-// passes `excluding` — and why merging silently did nothing until it did.
-test("a topic already in the TOC matches itself, unless the caller excludes it", () => {
-  const { store } = storeWith({
+// A fact's session and date are its provenance (ADR 0013), so a merge that restamped them
+// would corrupt the corpus while looking like it tidied it.
+test("the facts a merge moves keep their own session and date, and a second dedup changes nothing", () => {
+  const { config, store } = storeWith({
+    brazil_build_system: { keywords: ["brazil", "build", "versionset"], context: ["a", "b"] },
+    brazil_build_systems: {
+      keywords: ["brazil", "build", "versionset"],
+      context: ["has a Config file"],
+      session: ANOTHER_SESSION,
+      date: AN_EARLIER_DAY,
+    },
+  });
+
+  store.dedupTopics({ apply: true });
+  const winnerFile = readFileSync(topicPath(config, "brazil_build_system"), "utf-8");
+  const toc = store.loadToc();
+  const again = store.dedupTopics({ apply: true });
+
+  const moved = parseTopic(winnerFile).find((fact) => fact.text === "has a Config file");
+  assert.equal(moved.session, ANOTHER_SESSION.slice(0, 8));
+  assert.equal(moved.date, AN_EARLIER_DAY);
+  assert.deepEqual(again.merges, []);
+  assert.equal(readFileSync(topicPath(config, "brazil_build_system"), "utf-8"), winnerFile);
+  assert.deepEqual(store.loadToc(), toc);
+});
+
+test("a tombstone renames the topic file's own extension, not an earlier .md in its path", () => {
+  const underADotMdDirectory = createConfig(
+    { corpusDir: join(mkdtempSync(join(tmpdir(), "claude-toc-")), "notes.md") },
+    {}
+  );
+  const { config, store } = storeWith(
+    {
+      brazil_build_system: { keywords: ["brazil", "build"], context: ["a", "b"] },
+      brazil_build_systems: { keywords: ["brazil", "build"], context: ["c"] },
+    },
+    underADotMdDirectory
+  );
+
+  store.dedupTopics({ apply: true });
+
+  assert.deepEqual(readdirSync(config.topicsDir).sort(), [
+    "brazil_build_system.md",
+    "brazil_build_systems.merged.md",
+  ]);
+});
+
+// The corpus has no backup (ADR 0001), so the command that merges it only says what it would
+// do until it is told otherwise.
+test("toc-extract --dedup prints the plan and changes nothing, and --apply carries it out", () => {
+  const { config, store } = storeWith({
     brazil_build_system: { keywords: ["brazil", "build", "versionset"], context: ["a", "b"] },
     brazil_build_systems: { keywords: ["brazil", "build", "versionset"], context: ["c"] },
   });
-  const keywords = ["brazil", "build", "versionset"];
+  const topicFiles = readdirSync(config.topicsDir).sort();
 
-  const itself = store.findSimilarTopic("brazil_build_systems", keywords);
-  const other = store.findSimilarTopic("brazil_build_systems", keywords, {
-    excluding: "brazil_build_systems",
-  });
+  const plan = runCli(EXTRACTOR, { args: ["--dedup"], config });
 
-  assert.equal(itself.id, "brazil_build_systems");
-  assert.equal(itself.score, 1);
-  assert.equal(other.id, "brazil_build_system");
+  assert.equal(plan.stderr, "");
+  assert.match(plan.stdout, /brazil_build_systems into brazil_build_system \(score: 0\.85\)/);
+  assert.match(plan.stdout, /rerun with --apply/i);
+  assert.deepEqual(readdirSync(config.topicsDir).sort(), topicFiles);
+  assert.equal(Object.keys(store.loadToc().topics).length, 2);
+
+  const applied = runCli(EXTRACTOR, { args: ["--dedup", "--apply"], config });
+
+  assert.equal(applied.stderr, "");
+  assert.match(applied.stdout, /Merged brazil_build_systems into brazil_build_system/);
+  assert.deepEqual(Object.keys(store.loadToc().topics), ["brazil_build_system"]);
 });
