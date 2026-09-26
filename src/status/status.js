@@ -1,14 +1,14 @@
 import { statSync } from "node:fs";
 
-import { createExtractionLock } from "./extract/lock.js";
-import { dollars, thousands } from "./numbers.js";
-import { localDateParts } from "./local-time.js";
-import { searchLogEntries } from "./search/log.js";
-import { createSearch, SOURCES } from "./search/search.js";
-import { openIndex } from "./index/open.js";
-import { createSpendLog, UNDATED } from "./extract/spend.js";
-import { createStateStore } from "./sessions/progress.js";
-import { createSweeper } from "./extract/sweep.js";
+import { createExtractionLock } from "../extract/lock.js";
+import { createSpendLog, UNDATED } from "../extract/spend.js";
+import { createSweeper } from "../extract/sweep.js";
+import { openIndex } from "../index/open.js";
+import { localDateParts } from "../local-time.js";
+import { dollars, thousands } from "../numbers.js";
+import { searchLogEntries } from "../search/log.js";
+import { createSearch, SOURCES } from "../search/search.js";
+import { createStateStore } from "../sessions/progress.js";
 
 export const HEALTHY = "healthy";
 export const NEVER_RUN = "never run";

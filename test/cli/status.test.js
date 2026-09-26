@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 
-import { summarizeStatus } from "../../src/status.js";
+import { summarizeStatus } from "../../src/status/status.js";
 import { renderStatus } from "../../src/cli/status.js";
 import { createStateStore } from "../../src/sessions/progress.js";
 import { SESSION_IS_IDLE_AFTER_MS } from "../../src/extract/sweep.js";

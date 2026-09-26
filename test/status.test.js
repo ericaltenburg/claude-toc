@@ -8,7 +8,7 @@ import {
   summarizeStatus,
   EXTRACTION_IS_STALE_AFTER_MS,
   SEARCH_ROW_LABELS,
-} from "../src/status.js";
+} from "../src/status/status.js";
 import { renderStatus } from "../src/cli/status.js";
 import { SOURCES } from "../src/search/search.js";
 import { createSpendLog } from "../src/extract/spend.js";
