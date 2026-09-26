@@ -145,14 +145,15 @@ export function createQueries(db, config) {
 
   // --- The extractor's questions ---
 
-  // The facts a session's earlier slices already produced, newest first, wherever they were
-  // filed. A fact's session is a prefix of the full id, matched the same way
+  // The current facts a session's earlier slices already produced, newest first, wherever they
+  // were filed. A fact's session is a prefix of the full id, matched the same way
   // SESSION_STARTS_WITH_THE_FACTS_PREFIX joins the two tables.
   function factsFromSession(sessionId, limit) {
     return db
       .prepare(
         `select id, topic, section, text from facts
           where session is not null and substr(?, 1, length(session)) = session
+            and superseded_date is null
           order by date desc, id desc limit ?`
       )
       .all(sessionId, limit);
@@ -164,7 +165,7 @@ export function createQueries(db, config) {
     return db
       .prepare(
         `select f.id as id, f.topic as topic, f.section as section, f.text as text,
-                bm25(facts_fts) as rank
+                f.superseded_date as superseded_date, bm25(facts_fts) as rank
          from facts_fts join facts f on f.id = facts_fts.rowid
          where facts_fts match ?
          order by bm25(facts_fts), f.date desc limit ?`

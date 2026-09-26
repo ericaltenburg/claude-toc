@@ -287,15 +287,28 @@ test("the known-facts block is capped at twenty facts", () => {
   extractor.close();
 
   assert.equal(result.knownFacts, 20);
-  const known = model.calls[0].prompt.match(/^- \(alcs_broadcast_variants\//gm) ?? [];
+  const known = model.calls[0].prompt.match(/^\[\d+\] \(alcs_broadcast_variants\//gm) ?? [];
   assert.equal(known.length, 20);
 });
 
 const EARLIER_IN_THIS_SESSION = `session:${SESSION.slice(0, 8)}, 2026-08-20`;
 
+const NUMBERED = /^\[(\d+)\] /;
+
+// Each known fact as "(topic/Section) text", without the number it was listed under.
 function knownFactsIn(prompt) {
   const block = prompt.split("do not repeat these:\n")[1]?.split("\nCONVERSATION:")[0] ?? "";
-  return block.split("\n").filter((line) => line.startsWith("- ("));
+  return block
+    .split("\n")
+    .filter((line) => NUMBERED.test(line))
+    .map((line) => line.replace(NUMBERED, ""));
+}
+
+// The number a prompt listed a known fact under, which is how a reply names what it supersedes.
+function numberOf(prompt, text) {
+  const line = prompt.split("\n").find((listed) => NUMBERED.test(listed) && listed.endsWith(`) ${text}`));
+  assert.ok(line, `"${text}" is not among the known facts`);
+  return Number(NUMBERED.exec(line)[1]);
 }
 
 function knownFactsPromptedFor(config) {
@@ -325,14 +338,14 @@ test("a session's own earlier facts lead the known facts, ahead of the ranked on
   assert.deepEqual(
     known.slice(0, 2).sort(),
     [
-      "- (alcs_broadcast_variants/Context) Broadcast variants are keyed by show id",
-      "- (ingest_lambda/Context) The ingest lambda retries three times",
+      "(alcs_broadcast_variants/Context) Broadcast variants are keyed by show id",
+      "(ingest_lambda/Context) The ingest lambda retries three times",
     ],
     "an earlier slice's facts come first, even one filed under a topic that is not a candidate"
   );
   assert.deepEqual(
     known.slice(2),
-    ["- (alcs_broadcast_variants/Context) Broadcast variants are stored in dynamodb"],
+    ["(alcs_broadcast_variants/Context) Broadcast variants are stored in dynamodb"],
     "a ranked fact the session's own facts already listed is not listed twice"
   );
 });
@@ -348,10 +361,10 @@ test("the same-session facts in a prompt are capped", () => {
 
   const known = knownFactsPromptedFor(config);
 
-  const own = known.filter((line) => line.startsWith("- (earlier_in_this_session/"));
+  const own = known.filter((line) => line.startsWith("(earlier_in_this_session/"));
   assert.equal(own.length, SAME_SESSION_FACTS_IN_A_PROMPT);
   assert.ok(
-    known.some((line) => line.startsWith("- (alcs_broadcast_variants/")),
+    known.some((line) => line.startsWith("(alcs_broadcast_variants/")),
     "the ranked facts still follow a session that hit the cap"
   );
 });
@@ -363,8 +376,118 @@ test("a session with no facts yet is prompted with the ranked facts alone, as be
   });
 
   assert.deepEqual(knownFactsPromptedFor(config).sort(), [
-    "- (alcs_broadcast_variants/Context) Broadcast variants are stored in dynamodb",
-    "- (alcs_broadcast_variants/Decisions) Will use dynamodb for the alcs pipeline",
+    "(alcs_broadcast_variants/Context) Broadcast variants are stored in dynamodb",
+    "(alcs_broadcast_variants/Decisions) Will use dynamodb for the alcs pipeline",
+  ]);
+});
+
+// --- Supersession ---
+
+const OPEN_ITEM = "Whether broadcast variants move off dynamodb is undecided";
+const OPEN_LINE = `- ${OPEN_ITEM} [session:aaaaaaaa, 2026-05-12]`;
+const WHEN_THIS_SESSION_HAPPENED = "2026-08-27";
+
+function corpusWithAnOpenItem() {
+  const config = corpusWithOneTopic();
+  writeTopic(config, "alcs_broadcast_variants", {
+    Context: ["- Broadcast variants are stored in dynamodb [session:aaaaaaaa, 2026-05-12]"],
+    Decisions: ["- Will use dynamodb for the alcs pipeline [session:aaaaaaaa, 2026-05-12]"],
+    Open: [OPEN_LINE],
+  });
+  return config;
+}
+
+function extractWith(config, reply) {
+  const model = stubModel((call) => reply(call.prompt));
+  const extractor = extractorFor(config, model, { timeZone: "UTC" });
+  const result = extractor.extractSession(sessionIn(config));
+  extractor.close();
+  return { result, model };
+}
+
+const topicText = (config) => readFileSync(topicPath(config, "alcs_broadcast_variants"), "utf-8");
+
+test("the decision that settles an open item supersedes it, and the item's line is marked, not removed", () => {
+  const config = corpusWithAnOpenItem();
+  const decision = "Chose to keep broadcast variants in dynamodb, because every variant fits one item";
+
+  const { result } = extractWith(config, (prompt) => ({
+    ...MODEL_OUTPUT,
+    decisions: [{ text: decision, supersedes: [numberOf(prompt, OPEN_ITEM)] }],
+  }));
+
+  assert.equal(result.superseded, 1);
+  assert.ok(
+    topicText(config).includes(
+      `\n${OPEN_LINE} [superseded:${SESSION.slice(0, 8)}, ${WHEN_THIS_SESSION_HAPPENED}]\n`
+    ),
+    topicText(config)
+  );
+  const facts = parseTopic(topicText(config));
+  assert.deepEqual(
+    [OPEN_ITEM, decision].map((text) => {
+      const fact = facts.find((candidate) => candidate.text === text);
+      return [fact.section, fact.session, fact.date, fact.superseded];
+    }),
+    [
+      [
+        "Open",
+        "aaaaaaaa",
+        "2026-05-12",
+        { session: SESSION.slice(0, 8), date: WHEN_THIS_SESSION_HAPPENED },
+      ],
+      ["Decisions", SESSION.slice(0, 8), WHEN_THIS_SESSION_HAPPENED, null],
+    ]
+  );
+});
+
+test("a supersedes number that names no known fact is ignored, and the fact is appended as usual", () => {
+  const config = corpusWithAnOpenItem();
+
+  const { result } = extractWith(config, () => ({
+    ...MODEL_OUTPUT,
+    context: [{ text: "Broadcast variants are replicated per region", supersedes: [999, -1, "0"] }],
+  }));
+
+  assert.equal(result.status, "extracted");
+  assert.equal(result.superseded, 0);
+  assert.ok(factsIn(config, "alcs_broadcast_variants").some((line) => line.includes("replicated per region")));
+  assert.equal(topicText(config).includes("[superseded:"), false);
+});
+
+// Marking the old fact is only safe when the new one landed. One the section already holds,
+// reworded, would otherwise leave the value it restates with no current line saying it.
+test("a fact that only restates the one it claims to supersede marks nothing", () => {
+  const config = corpusWithAnOpenItem();
+  const before = topicText(config);
+
+  extractWith(config, (prompt) => ({
+    ...MODEL_OUTPUT,
+    context: [],
+    decisions: [
+      {
+        text: "Will use dynamodb for the alcs pipeline",
+        supersedes: [numberOf(prompt, "Will use dynamodb for the alcs pipeline")],
+      },
+    ],
+  }));
+
+  assert.equal(topicText(config).includes("[superseded:"), false);
+  assert.equal(topicText(config), before);
+});
+
+test("a superseded fact is not offered to the model as one already in memory", () => {
+  const config = corpusWithOneTopic();
+  writeTopic(config, "alcs_broadcast_variants", {
+    Context: [
+      "- Broadcast variants are stored in dynamodb [session:aaaaaaaa, 2026-05-12] [superseded:bbbbbbbb, 2026-06-01]",
+      "- Broadcast variants are stored in s3 [session:bbbbbbbb, 2026-06-01]",
+      `- Broadcast variants are keyed by show id [${EARLIER_IN_THIS_SESSION}] [superseded:bbbbbbbb, 2026-06-01]`,
+    ],
+  });
+
+  assert.deepEqual(knownFactsPromptedFor(config), [
+    "(alcs_broadcast_variants/Context) Broadcast variants are stored in s3",
   ]);
 });
 

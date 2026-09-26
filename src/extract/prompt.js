@@ -22,6 +22,8 @@ Return ONLY valid JSON with this exact schema:
   "open": ["open item 1"]
 }
 
+Any fact may instead be an object, {"text": "the fact", "supersedes": [0, 3]}, naming by number the facts listed under "Already in memory" that it replaces.
+
 Rules:
 - topic.id: short reusable identifier (e.g. "broadcast_variants", "resume_project")
 - keywords: words that would appear in future messages about this topic
@@ -34,6 +36,8 @@ Rules:
 - context, decisions, gotchas and open record what the conversation established, not what happened in it. Session narrative (what was run, committed, created, opened or asked, or who did what) is left out unless it established a durable fact; when it did, record the durable fact itself (e.g. "The deploy role lacks s3:PutObject", not "Ran the deploy and it failed with AccessDenied").
 - leave out the user's working-style preferences and conventions for the assistant (e.g. "no em dashes"); those live in the user's CLAUDE.md.
 - if the conversation has no meaningful content, return {"skip": true}
+- supersedes: when a new fact changes a value, reverses a decision or answers an open item listed under "Already in memory", return it as an object whose "supersedes" names those facts' numbers. This is how an open item closes: the fact or decision that settled it supersedes it. A fact that only adds detail supersedes nothing.
+- a different number, version, date or qualifier means supersedes, never a duplicate: return the new fact and name the old one's number.
 - deduplicate — don't extract things that are essentially the same fact reworded
 `;
 
@@ -58,12 +62,13 @@ export function buildExtractPrompt({ candidates = [], knownFacts = [] } = {}) {
   }
 
   // Not "about those topics": the facts this session's earlier slices produced lead the list,
-  // wherever they were filed.
+  // wherever they were filed. A fact's number is its place in knownFacts, which is how the
+  // caller turns a reply's "supersedes" back into the facts it names.
   if (knownFacts.length) {
-    prompt += `\nAlready in memory, so do not repeat these:\n`;
-    for (const fact of knownFacts) {
-      prompt += `- (${fact.topic}/${fact.section}) ${fact.text}\n`;
-    }
+    prompt += `\nAlready in memory, numbered for "supersedes", so do not repeat these:\n`;
+    knownFacts.forEach((fact, number) => {
+      prompt += `[${number}] (${fact.topic}/${fact.section}) ${fact.text}\n`;
+    });
   }
 
   return `${prompt}\nCONVERSATION:\n`;
@@ -118,15 +123,21 @@ function extractionFrom(text) {
       keywords: Array.isArray(parsed.topic.keywords) ? parsed.topic.keywords : [],
       summary: typeof parsed.topic.summary === "string" ? parsed.topic.summary : "",
     },
-    context: stringsOnly(parsed.context),
-    decisions: stringsOnly(parsed.decisions),
-    gotchas: stringsOnly(parsed.gotchas),
-    open: stringsOnly(parsed.open),
+    context: factsIn(parsed.context),
+    decisions: factsIn(parsed.decisions),
+    gotchas: factsIn(parsed.gotchas),
+    open: factsIn(parsed.open),
   };
 }
 
-function stringsOnly(value) {
-  return (Array.isArray(value) ? value : []).filter(
-    (item) => typeof item === "string" && item.trim()
-  );
+// Each fact as { text, supersedes }, from a bare string or from an object carrying its text.
+// Only whole, non-negative numbers survive in supersedes; whether one names a listed fact is
+// for the caller to say, since only the caller holds the list the prompt was built from.
+function factsIn(value) {
+  return (Array.isArray(value) ? value : []).flatMap((item) => {
+    const text = typeof item === "string" ? item : item?.text;
+    if (typeof text !== "string" || !text.trim()) return [];
+    const numbers = Array.isArray(item?.supersedes) ? item.supersedes : [];
+    return [{ text, supersedes: numbers.filter((n) => Number.isInteger(n) && n >= 0) }];
+  });
 }

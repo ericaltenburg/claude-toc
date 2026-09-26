@@ -27,10 +27,12 @@ test("the failure carries enough of the reply to diagnose it", () => {
   assert.throws(() => parseModelOutput("   "), /it returned nothing/);
 });
 
-test("anything that is not a string is dropped from context and decisions", () => {
+const supersedingNothing = (text) => ({ text, supersedes: [] });
+
+test("anything that is neither a fact's text nor an object carrying one is dropped", () => {
   const output = JSON.stringify({
     topic: { id: "brazil", keywords: "not a list", summary: 7 },
-    context: ["a real fact", 42, "", null, "  "],
+    context: ["a real fact", 42, "", null, "  ", { supersedes: [0] }, { text: "  " }, { text: 3 }],
     decisions: "not a list",
   });
 
@@ -38,7 +40,7 @@ test("anything that is not a string is dropped from context and decisions", () =
 
   assert.deepEqual(parsed.topic.keywords, []);
   assert.equal(parsed.topic.summary, "");
-  assert.deepEqual(parsed.context, ["a real fact"]);
+  assert.deepEqual(parsed.context, [supersedingNothing("a real fact")]);
   assert.deepEqual(parsed.decisions, []);
 });
 
@@ -55,12 +57,37 @@ test("gotchas and open items are read from their own arrays, and a reply without
   const withNeither = parseModelOutput(JSON.stringify({ topic, context: ["uses version sets"] }));
 
   assert.deepEqual(withBoth.gotchas, [
-    "a stale version set pins the old major silently; merge it first",
+    supersedingNothing("a stale version set pins the old major silently; merge it first"),
   ]);
-  assert.deepEqual(withBoth.open, ["whether to move to the new major is undecided"]);
+  assert.deepEqual(withBoth.open, [supersedingNothing("whether to move to the new major is undecided")]);
   assert.deepEqual(withNeither.gotchas, []);
   assert.deepEqual(withNeither.open, []);
   assert.deepEqual(withNeither.decisions, []);
+});
+
+test("a fact may come back as an object naming the known facts it supersedes", () => {
+  const parsed = parseModelOutput(
+    JSON.stringify({
+      topic: { id: "brazil", keywords: [], summary: "" },
+      context: [
+        "a bare string",
+        { text: "pins major version 4", supersedes: [0, 2] },
+        { text: "no supersedes at all" },
+        { text: "odd numbers", supersedes: [1.5, "3", -1, null, 4] },
+        { text: "supersedes is not a list", supersedes: 3 },
+      ],
+      open: [{ text: "whether to take 5.0 is undecided", supersedes: [] }],
+    })
+  );
+
+  assert.deepEqual(parsed.context, [
+    supersedingNothing("a bare string"),
+    { text: "pins major version 4", supersedes: [0, 2] },
+    supersedingNothing("no supersedes at all"),
+    { text: "odd numbers", supersedes: [4] },
+    supersedingNothing("supersedes is not a list"),
+  ]);
+  assert.deepEqual(parsed.open, [supersedingNothing("whether to take 5.0 is undecided")]);
 });
 
 // The marker is how a sweep recognises the extractor's own sessions, per ADR 0011, so the
@@ -73,13 +100,32 @@ test("candidate topics and known facts are named in the prompt when there are an
   const bare = buildExtractPrompt();
   const withContext = buildExtractPrompt({
     candidates: [{ topic: "brazil", summary: "the build system", keywords: "build brazil" }],
-    knownFacts: [{ topic: "brazil", section: "Context", text: "uses version sets" }],
+    knownFacts: [
+      { topic: "brazil", section: "Context", text: "uses version sets" },
+      { topic: "brazil", section: "Open", text: "whether to pin the major is undecided" },
+    ],
   });
 
   assert.doesNotMatch(bare, /Candidate topics/);
+  assert.doesNotMatch(bare, /^\[0\]/m);
   assert.match(withContext, /brazil: the build system \(keywords: build brazil\)/);
-  assert.match(withContext, /\(brazil\/Context\) uses version sets/);
   assert.match(withContext, /do not repeat these/);
+  assert.match(
+    withContext,
+    /^\[0\] \(brazil\/Context\) uses version sets\n\[1\] \(brazil\/Open\) whether to pin the major is undecided\n/m,
+    "numbered from zero, so a new fact can name the ones it supersedes"
+  );
+});
+
+// Graphiti, mem0 and ADRs all keep an old fact and mark it superseded, and Graphiti's dedupe
+// prompt insists a numeric or date difference is never a duplicate.
+test("a changed value supersedes the known fact by number, and an open item closes that way", () => {
+  const prompt = buildExtractPrompt();
+
+  assert.match(prompt, /\{"text": "the fact", "supersedes": \[0, 3\]\}/);
+  assert.match(prompt, /a different number, version, date or qualifier means supersedes, never a duplicate/);
+  assert.match(prompt, /an open item closes: the fact or decision that settled it supersedes it/);
+  assert.match(prompt, /A fact that only adds detail supersedes nothing/);
 });
 
 // The candidate list shows each topic's summary, so the summary steers where the next session's
