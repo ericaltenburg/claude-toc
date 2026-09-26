@@ -109,7 +109,9 @@ export function openIndex(config, { timeZone } = {}) {
     }
   }
 
-  return { db, refresh, close: () => db.close(), ...createQueries(db, config) };
+  // The connection stays in here. What callers get is refresh and the questions in
+  // queries.js, so no layer above this one writes SQL of its own.
+  return { refresh, close: () => db.close(), ...createQueries(db, config) };
 }
 
 // More than one process refreshes the index: the extractor after every session, and a

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { appendFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 
 import { localDateParts } from "../src/local-time.js";
 import { openIndex, SCHEMA_VERSION } from "../src/index/open.js";
@@ -23,8 +24,19 @@ const NY = "America/New_York";
 
 const plain = (row) => (row ? { ...row } : row);
 
+// The index hands out no connection (ADR 0017), so these tests read what landed in its tables
+// through a connection of their own on the same file.
 function indexOf(config) {
-  return openIndex(config, { timeZone: NY });
+  const index = openIndex(config, { timeZone: NY });
+  const db = new DatabaseSync(config.indexPath);
+  return {
+    ...index,
+    db,
+    close: () => {
+      db.close();
+      index.close();
+    },
+  };
 }
 
 function withCorpus(run) {
