@@ -80,7 +80,7 @@ export function createStatusReport(
       index.refresh();
       const refreshMs = performance.now() - startedAt;
       return {
-        ...indexStatistics(index.db, { at, timeZone }),
+        ...index.statistics({ factsAddedSince: growthWindows(at, timeZone) }),
         refreshMs,
         bytes: bytesOnDiskOrNull(config.indexPath),
       };
@@ -144,58 +144,17 @@ function bytesOnDiskOrNull(path) {
   }
 }
 
-// --- Index statistics ---
+// --- Corpus growth ---
 
 const GROWTH_WINDOWS_IN_DAYS = [7, 30];
 
-function indexStatistics(db, { at = Date.now(), timeZone } = {}) {
-  const totals = db
-    .prepare(
-      `select (select count(*) from topics)   as topics,
-              (select count(*) from facts)    as facts,
-              (select count(*) from prompts)  as prompts,
-              (select count(*) from sessions) as sessions`
-    )
-    .get();
-
-  return {
-    ...totals,
-    factsPerTopic: factsPerTopic(db),
-    added: GROWTH_WINDOWS_IN_DAYS.map((days) => ({
-      days,
-      facts: factsAddedSince(db, startOfWindow(at, days, timeZone)),
-    })),
-  };
-}
-
-function factsPerTopic(db) {
-  const counts = db
-    .prepare(
-      `select t.id as topic, count(f.id) as facts
-       from topics t left join facts f on f.topic = t.id
-       group by t.id
-       order by facts desc, t.id asc`
-    )
-    .all();
-  if (!counts.length) return { min: 0, median: 0, max: 0, largest: null };
-
-  const sorted = counts.map((row) => row.facts).sort((a, b) => a - b);
-  return {
-    min: sorted[0],
-    median: medianOf(sorted),
-    max: counts[0].facts,
-    largest: counts[0].topic,
-  };
-}
-
-// An even number of topics reports the lower of the two middle counts, so the median is
-// always a count some topic really has rather than an average of two that neither does.
-function medianOf(ascending) {
-  return ascending[Math.floor((ascending.length - 1) / 2)];
-}
-
-function factsAddedSince(db, date) {
-  return db.prepare("select count(*) as facts from facts where date >= ?").get(date).facts;
+// The index counts facts dated on or after a local date; which dates those are is the report's
+// to decide, since the report owns its windows.
+function growthWindows(at, timeZone) {
+  return GROWTH_WINDOWS_IN_DAYS.map((days) => ({
+    days,
+    since: startOfWindow(at, days, timeZone),
+  }));
 }
 
 // A window of N days is N whole local dates, today included, so 7d never means eight. The

@@ -192,6 +192,51 @@ export function createQueries(db, config) {
       .map((row) => row.id);
   }
 
+  // --- Status's statistics ---
+
+  // What the index holds, and how many facts are dated on or after each of the given local
+  // dates. Which dates those are belongs to the report.
+  function statistics({ factsAddedSince = [] } = {}) {
+    const totals = db
+      .prepare(
+        `select (select count(*) from topics)   as topics,
+                (select count(*) from facts)    as facts,
+                (select count(*) from prompts)  as prompts,
+                (select count(*) from sessions) as sessions`
+      )
+      .get();
+
+    return {
+      ...totals,
+      factsPerTopic: factsPerTopic(),
+      added: factsAddedSince.map(({ days, since }) => ({ days, facts: factsDatedFrom(since) })),
+    };
+  }
+
+  function factsPerTopic() {
+    const counts = db
+      .prepare(
+        `select t.id as topic, count(f.id) as facts
+         from topics t left join facts f on f.topic = t.id
+         group by t.id
+         order by facts desc, t.id asc`
+      )
+      .all();
+    if (!counts.length) return { min: 0, median: 0, max: 0, largest: null };
+
+    const sorted = counts.map((row) => row.facts).sort((a, b) => a - b);
+    return {
+      min: sorted[0],
+      median: medianOf(sorted),
+      max: counts[0].facts,
+      largest: counts[0].topic,
+    };
+  }
+
+  function factsDatedFrom(date) {
+    return db.prepare("select count(*) as facts from facts where date >= ?").get(date).facts;
+  }
+
   return {
     facts,
     prompts,
@@ -204,7 +249,14 @@ export function createQueries(db, config) {
     topicsOfProject,
     describeTopic,
     topicIds,
+    statistics,
   };
+}
+
+// An even number of topics reports the lower of the two middle counts, so the median is
+// always a count some topic really has rather than an average of two that neither does.
+function medianOf(ascending) {
+  return ascending[Math.floor((ascending.length - 1) / 2)];
 }
 
 // --- Query plans ---
