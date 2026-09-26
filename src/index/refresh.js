@@ -6,7 +6,15 @@
 // Refresh is incremental. A topic file is reparsed only when its modification time or size
 // changed, and the two logs are read only past the byte offset already consumed.
 
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from "node:fs";
 
 import { parseTopic } from "../corpus/format.js";
 import { createTopicStore } from "../corpus/topics.js";
