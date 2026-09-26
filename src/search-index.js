@@ -113,7 +113,10 @@ export function openIndex(config, { timeZone } = {}) {
   let rebuiltPending = rebuilt;
 
   function refresh() {
-    db.exec("begin");
+    // Immediate, because refresh reads before it writes. A deferred transaction would take a
+    // read snapshot first and upgrade to a write later, and in WAL mode an upgrade blocked by
+    // another writer fails with SQLITE_BUSY at once: the busy timeout never retries it.
+    db.exec("begin immediate");
     try {
       const stats = {
         rebuilt: rebuiltPending,
@@ -133,8 +136,14 @@ export function openIndex(config, { timeZone } = {}) {
   return { db, refresh, close: () => db.close() };
 }
 
+// More than one process refreshes the index: the extractor after every session, and a
+// toc-search or toc-status that may run in the same moment. Without a busy timeout SQLite
+// fails the second writer at once with "database is locked"; with one it waits its turn.
+const WAIT_FOR_ANOTHER_WRITER_MS = 5000;
+
 function connect(config) {
   const db = new DatabaseSync(config.indexPath);
+  db.exec(`pragma busy_timeout = ${WAIT_FOR_ANOTHER_WRITER_MS}`);
   db.exec("pragma journal_mode = wal");
   db.exec("pragma foreign_keys = on");
   return db;
