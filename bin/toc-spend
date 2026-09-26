@@ -1,5 +1,4 @@
 #!/bin/sh
 set -e
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec "${CLAUDE_TOC_NODE:-node}" --disable-warning=ExperimentalWarning \
-  "$here/../src/cli/index.js" spend "$@"
+exec "$here/../scripts/node" "$here/../src/cli/index.js" spend "$@"

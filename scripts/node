@@ -1,0 +1,61 @@
+#!/bin/sh
+# Runs a node that has node:sqlite, which needs 22.5 or later (docs/adr/0004), with its
+# experimental warning turned off. The bin/toc-* commands and the prompt hook start here
+# because the node first on PATH is often older, and a plugin has no way to set PATH.
+#
+# The first of these that is new enough wins:
+#   1. $CLAUDE_TOC_NODE. It is an explicit choice, so one that is too old fails here
+#      instead of being passed over for a node nobody chose.
+#   2. node on PATH.
+#   3. the newest $NVM_DIR/versions/node/v*/bin/node, where NVM_DIR defaults to ~/.nvm.
+#   4. /opt/homebrew/bin/node, then /usr/local/bin/node.
+#
+# If none is, this prints why to stderr and exits 1. With --optional as the first
+# argument it exits 0 instead, for the prompt hook: a missing node must not fail a prompt.
+
+status_without_node=1
+if [ "${1-}" = --optional ]; then
+  status_without_node=0
+  shift
+fi
+
+# Succeeds when the version, v22.5.0 or 22.5.0, is at least 22.5.
+new_enough() {
+  version=${1#v}
+  major=${version%%.*}
+  minor=${version#"$major".}
+  minor=${minor%%.*}
+  case "$major.$minor" in *[!0-9.]* | .* | *.) return 1 ;; esac
+  [ "$major" -gt 22 ] || { [ "$major" -eq 22 ] && [ "$minor" -ge 5 ]; }
+}
+
+# Replaces this process with the candidate when it is new enough, else returns.
+run_if_new_enough() {
+  candidate=$1
+  shift
+  new_enough "$("$candidate" --version 2>/dev/null)" &&
+    exec "$candidate" --disable-warning=ExperimentalWarning "$@"
+}
+
+newest_nvm_node() {
+  versions=${NVM_DIR:-$HOME/.nvm}/versions/node
+  newest=$(for dir in "$versions"/v*; do printf '%s\n' "${dir##*/v}"; done |
+    sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
+  printf '%s\n' "$versions/v$newest/bin/node"
+}
+
+fail() {
+  printf '%s\n' "claude-toc needs Node >= 22.5 for node:sqlite (see docs/adr/0004)." "$1" >&2
+  exit "$status_without_node"
+}
+
+if [ -n "${CLAUDE_TOC_NODE-}" ]; then
+  run_if_new_enough "$CLAUDE_TOC_NODE" "$@"
+  fail "CLAUDE_TOC_NODE is $CLAUDE_TOC_NODE, which is $("$CLAUDE_TOC_NODE" --version 2>/dev/null || echo 'not a node'). Point it at a newer node, or unset it to search PATH, nvm and Homebrew."
+fi
+
+run_if_new_enough node "$@"
+run_if_new_enough "$(newest_nvm_node)" "$@"
+run_if_new_enough /opt/homebrew/bin/node "$@"
+run_if_new_enough /usr/local/bin/node "$@"
+fail "None was found on PATH, in ~/.nvm, in /opt/homebrew/bin or in /usr/local/bin. Install one, or point CLAUDE_TOC_NODE at it."

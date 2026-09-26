@@ -11,14 +11,8 @@ import {
   sessionPayload,
   tempCorpus,
   writeTranscript,
-  LOGGER_HOOK,
-  SWEEP_HOOK,
+  PROMPT_HOOK,
 } from "./support/corpus.js";
-
-const HOOKS = [
-  ["toc-logger", LOGGER_HOOK],
-  ["toc-sweep", SWEEP_HOOK],
-];
 
 const LONGER_THAN_THE_IDLE_THRESHOLD = 2 * 60 * 60_000;
 const A_SPAWN_TAKES_AT_MOST_MS = 5000;
@@ -26,33 +20,31 @@ const A_SPAWN_WOULD_HAVE_LANDED_WITHIN_MS = 300;
 const A_PROMPT_WOULD_FEEL_MS = 2000;
 const TRANSCRIPTS_IN_A_BACKLOG = 300;
 
-for (const [name, hook] of HOOKS) {
-  test(`${name} exits zero and stays silent on garbage input`, () => {
-    const config = tempCorpus();
-    const result = runNode(hook, { input: "not json at all", config });
+test("the prompt hook exits zero and stays silent on garbage input", () => {
+  const config = tempCorpus();
+  const result = runNode(PROMPT_HOOK, { input: "not json at all", config });
 
-    assert.equal(result.status, 0);
-    assert.equal(result.stdout, "");
-    assert.equal(result.stderr, "");
-  });
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+});
 
-  test(`${name} never writes to stdout on a valid payload`, () => {
-    const config = tempCorpus();
-    const result = runNode(hook, { input: sessionPayload(config), config });
+test("the prompt hook never writes to stdout on a valid payload", () => {
+  const config = tempCorpus();
+  const result = runNode(PROMPT_HOOK, { input: sessionPayload(config), config });
 
-    assert.equal(result.status, 0);
-    assert.equal(result.stdout, "");
-  });
-}
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, "");
+});
 
-test("toc-logger indexes a session once, without a per-turn counter file", () => {
+test("a prompt indexes its session once, without a per-turn counter file", () => {
   const config = tempCorpus();
   const payload = sessionPayload(config, {
     session_id: "cccccccc-1111-2222-3333-444455556666",
   });
 
-  runNode(LOGGER_HOOK, { input: payload, config });
-  runNode(LOGGER_HOOK, { input: payload, config });
+  runNode(PROMPT_HOOK, { input: payload, config });
+  runNode(PROMPT_HOOK, { input: payload, config });
 
   const lines = readFileSync(config.sessionIndexPath, "utf-8").trim().split("\n");
   assert.equal(lines.length, 1);
@@ -65,18 +57,6 @@ test("toc-logger indexes a session once, without a per-turn counter file", () =>
     readdirSync(config.corpusDir).filter((f) => f.startsWith(".turns-")),
     []
   );
-});
-
-test("toc-logger does nothing when fired inside the extractor", () => {
-  const config = tempCorpus();
-  const result = runNode(LOGGER_HOOK, {
-    input: sessionPayload(config),
-    config,
-    env: { TOC_EXTRACTING: "1" },
-  });
-
-  assert.equal(result.status, 0);
-  assert.equal(existsSync(config.sessionIndexPath), false);
 });
 
 function sweepable(config) {
@@ -93,10 +73,13 @@ function spawnLogFor(config) {
   return join(config.corpusDir, "spawns");
 }
 
-function sweepWith(config, { spawnsRecordedIn = spawnLogFor(config), env = {} } = {}) {
+function sweepWith(
+  config,
+  { spawnsRecordedIn = spawnLogFor(config), env = {}, input = sessionPayload(config) } = {}
+) {
   const extractor = fakeExtractor(config, { writesTo: spawnsRecordedIn });
-  return runNode(SWEEP_HOOK, {
-    input: sessionPayload(config),
+  return runNode(PROMPT_HOOK, {
+    input,
     config,
     env: { CLAUDE_TOC_EXTRACTOR: extractor, ...env },
   });
@@ -130,6 +113,29 @@ test("submitting a prompt sweeps an idle session in a detached extractor", () =>
   assert.equal(result.stderr, "");
   assert.deepEqual(spawns(spawnLog), [`${realpathSync(config.extractorDir)} --sweep`]);
   assert.ok(createExtractionLock(config).held(), "the extraction lock is held");
+});
+
+test("one prompt both records its session and sweeps", () => {
+  const config = tempCorpus();
+  sweepable(config);
+  const spawnLog = spawnLogFor(config);
+
+  sweepWith(config, { spawnsRecordedIn: spawnLog });
+
+  assert.match(readFileSync(config.sessionIndexPath, "utf-8"), /aaaaaaaa-1111/);
+  assert.equal(spawns(spawnLog).length, 1);
+});
+
+test("a payload the recorder cannot read still sweeps", () => {
+  const config = tempCorpus();
+  sweepable(config);
+  const spawnLog = spawnLogFor(config);
+
+  const result = sweepWith(config, { spawnsRecordedIn: spawnLog, input: "not json at all" });
+
+  assert.equal(result.status, 0);
+  assert.equal(existsSync(config.sessionIndexPath), false);
+  assert.equal(spawns(spawnLog).length, 1);
 });
 
 test("a second prompt inside the debounce window sweeps nothing", () => {
@@ -205,7 +211,7 @@ test("a sweep across a backlog of transcripts stays under the latency a prompt w
   assert.ok(elapsed < A_PROMPT_WOULD_FEEL_MS, `the sweep hook took ${elapsed}ms`);
 });
 
-test("a sweep fired inside the extractor does nothing at all", () => {
+test("a prompt fired inside the extractor neither records nor sweeps", () => {
   const config = tempCorpus();
   sweepable(config);
   const spawnLog = spawnLogFor(config);
@@ -218,4 +224,5 @@ test("a sweep fired inside the extractor does nothing at all", () => {
   assert.equal(result.status, 0);
   assert.equal(whatSpawnedWithinAMoment(spawnLog), "");
   assert.equal(existsSync(config.statePath), false);
+  assert.equal(existsSync(config.sessionIndexPath), false);
 });

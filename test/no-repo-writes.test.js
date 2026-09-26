@@ -14,8 +14,7 @@ import {
   sessionPayload,
   writeTranscript,
   REPO_ROOT,
-  LOGGER_HOOK,
-  SWEEP_HOOK,
+  PROMPT_HOOK,
   EXTRACTOR,
   SPEND_REPORT,
   STATUS_REPORT,
@@ -56,8 +55,7 @@ test("every write lands in the configured corpus and none in the repository", ()
   index.refresh();
   index.close();
 
-  runNode(LOGGER_HOOK, { input: sessionPayload(config), config });
-  runNode(SWEEP_HOOK, { input: sessionPayload(config), config });
+  runNode(PROMPT_HOOK, { input: sessionPayload(config), config });
   for (const args of [[], ["--dedup"], ["--sweep"], ["nosuchsession"]]) {
     const result = runCli(EXTRACTOR, { args, config });
     assert.equal(result.stderr, "", `toc-extract ${args.join(" ")}`);
@@ -82,7 +80,7 @@ test("the extractor lists sessions without writing anything", () => {
   const transcript = writeTranscript(config, "aaaaaaaa-1111-2222-3333-444455556666", [
     { role: "user", text: "what did we decide about broadcast variants?" },
   ]);
-  runNode(LOGGER_HOOK, {
+  runNode(PROMPT_HOOK, {
     input: sessionPayload(config, { transcript_path: transcript }),
     config,
   });

@@ -1,6 +1,7 @@
 ---
 name: toc-search
-description: Search four months of accumulated session memory — distilled facts and raw prompt history — for what was decided, seen, or worked on. Use when an internal service, repository, or identifier comes up that is not already in context; when the user asks what was decided, whether something was seen before, or what happened on a given day or week; or when starting work on a named service or repo. Also the manual entry point, /toc-search.
+description: Search four months of accumulated session memory — distilled facts and raw prompt history — for what was decided, seen, or worked on. Use when an internal service, repository, or identifier comes up that is not already in context; when the user asks what was decided, whether something was seen before, or what happened on a given day or week; or when starting work on a named service or repo. Also the manual entry point, /claude-toc:toc-search.
+allowed-tools: Bash(toc-search:*)
 ---
 
 # toc-search
@@ -17,13 +18,14 @@ change.
 ## Run it
 
 ```sh
-$CLAUDE_TOC_HOME/bin/toc-search --source automatic [options] <query terms>
+toc-search --source automatic [options] <query terms>
 ```
 
 Every search carries `--source automatic` unless the user asked for it in the
-current turn: they typed `/toc-search` (its command block is in the conversation),
-or they directly asked you to search memory. Only then drop the flag, so the
-search is logged `explicit`. Every other search is on your own judgement.
+current turn: they typed `/claude-toc:toc-search` (its command block is in the
+conversation), or they directly asked you to search memory. Only then drop the
+flag, so the search is logged `explicit`. Every other search is on your own
+judgement.
 
 Refresh runs before every query, so results are never stale and you never need to
 rebuild anything.
@@ -150,24 +152,31 @@ say so: that is the signal the list is too narrow.
 
 ## Installing
 
-The skill is this file; the command is in the repository it came from.
+This skill, the `toc-*` commands and the prompt hook are one plugin, `claude-toc`,
+loaded in place from its repository, so an edit there is live on `/reload-plugins`.
+Merge this into `~/.claude/settings.json`, with `path` set to the repository:
 
-1. `export CLAUDE_TOC_HOME=/path/to/claude-toc` — or set it in
-   `~/.claude/settings.json` under `env`, which is what makes the pre-authorised
-   permission below match.
-2. Pre-authorise the read path, or automatic search stalls on a permission prompt
-   and the point of automatic invocation is lost:
+```json
+{
+  "extraKnownMarketplaces": {
+    "claude-toc": {
+      "source": { "source": "directory", "path": "/path/to/claude-toc" }
+    }
+  },
+  "enabledPlugins": { "claude-toc@claude-toc": true },
+  "permissions": { "allow": ["Bash(toc-search:*)"] }
+}
+```
 
-   ```json
-   { "permissions": { "allow": ["Bash($CLAUDE_TOC_HOME/bin/toc-search:*)"] } }
-   ```
+The first two register the repository as a marketplace and enable the plugin from
+it. The permission pre-authorises the read path in every turn: this skill's
+`allowed-tools` covers only the turn that invokes it, and an automatic search in a
+later turn would stall on a permission prompt. Run the command bare, as
+`toc-search`, so the rule matches.
 
-   Always invoke it exactly as `$CLAUDE_TOC_HOME/bin/toc-search`, unquoted, so
-   the pre-authorised prefix matches.
-3. Symlink this directory into `~/.claude/skills/toc-search` so editing it in the
-   repository is editing the installed read path.
-4. If the `node` on PATH is older than 22.5 it has no `node:sqlite`; set
-   `CLAUDE_TOC_NODE` to a newer one.
+The commands and the hook find a node with `node:sqlite` (22.5 or later) on their
+own: PATH, then the newest nvm install, then Homebrew. To pin one, set
+`CLAUDE_TOC_NODE` under `env`; one that is too old is an error, not skipped.
 
 `--smoke` is the check that all of the above still works. Its queries name real
 topics, so they live with the corpus at `smoke-queries.json`, not in the public
