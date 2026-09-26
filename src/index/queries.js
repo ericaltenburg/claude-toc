@@ -10,7 +10,7 @@ import { createStateStore } from "../sessions/progress.js";
 // A fact carries only the first eight characters of its session id, so the join from a fact to
 // its session is equality on a computed prefix. Never LIKE, whose wildcards the session field
 // can contain (ADR 0008).
-export const SESSION_STARTS_WITH_THE_FACTS_PREFIX =
+const SESSION_STARTS_WITH_THE_FACTS_PREFIX =
   "substr(s.session_id, 1, length(f.session)) = f.session";
 
 const FACT_COLUMNS = ["f.topic", "f.section", "f.text", "f.session", "f.date", "f.line"];
@@ -130,7 +130,81 @@ export function createQueries(db, config) {
     }
   }
 
-  return { facts, prompts, overview, recordedProjectsUnder, quarantinedSessions, readOnlyQuery };
+  // --- The extractor's questions ---
+
+  // The facts a session's earlier slices already produced, newest first, wherever they were
+  // filed. A fact's session is a prefix of the full id, matched the same way
+  // SESSION_STARTS_WITH_THE_FACTS_PREFIX joins the two tables.
+  function factsFromSession(sessionId, limit) {
+    return db
+      .prepare(
+        `select id, topic, section, text from facts
+          where session is not null and substr(?, 1, length(session)) = session
+          order by date desc, id desc limit ?`
+      )
+      .all(sessionId, limit);
+  }
+
+  // One flat ranked scan, because bm25 is usable only there and not inside an aggregate, a
+  // subquery or a CTE (ADR 0002). The caller groups the rows into topics.
+  function factsRankedAgainst(match, limit) {
+    return db
+      .prepare(
+        `select f.id as id, f.topic as topic, f.section as section, f.text as text,
+                bm25(facts_fts) as rank
+         from facts_fts join facts f on f.id = facts_fts.rowid
+         where facts_fts match ?
+         order by bm25(facts_fts), f.date desc limit ?`
+      )
+      .all(match, limit);
+  }
+
+  // Every topic a session in the project fed, either through a fact attributed to one of its
+  // sessions or through the topic extraction recorded for it.
+  function topicsOfProject(project) {
+    if (!project) return new Set();
+    const projects = recordedProjectsUnder(project);
+    const marks = placeholders(projects);
+
+    const rows = db
+      .prepare(
+        `select distinct f.topic as topic from facts f join sessions s
+           on f.session is not null and ${SESSION_STARTS_WITH_THE_FACTS_PREFIX}
+          where s.project in (${marks})
+         union
+         select distinct topic from sessions
+          where topic is not null and project in (${marks})`
+      )
+      .all(...projects, ...projects);
+
+    return new Set(rows.map((row) => row.topic));
+  }
+
+  function describeTopic(id) {
+    const row = db.prepare("select summary, keywords from topics where id = ?").get(id);
+    return { summary: row?.summary ?? null, keywords: row?.keywords ?? null };
+  }
+
+  function topicIds() {
+    return db
+      .prepare("select id from topics")
+      .all()
+      .map((row) => row.id);
+  }
+
+  return {
+    facts,
+    prompts,
+    overview,
+    recordedProjectsUnder,
+    quarantinedSessions,
+    readOnlyQuery,
+    factsFromSession,
+    factsRankedAgainst,
+    topicsOfProject,
+    describeTopic,
+    topicIds,
+  };
 }
 
 // --- Query plans ---

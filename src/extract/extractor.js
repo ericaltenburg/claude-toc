@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { createTopicStore } from "../corpus/topics.js";
 import { localDateParts } from "../local-time.js";
 import { openIndex } from "../index/open.js";
-import { SESSION_STARTS_WITH_THE_FACTS_PREFIX } from "../index/queries.js";
 import { salientTermsQuery } from "../index/terms.js";
 import { createStateStore } from "../sessions/progress.js";
 import { chunkTurns, unreadSlice } from "../sessions/transcript.js";
@@ -53,7 +52,6 @@ export function createExtractor(
   } = {}
 ) {
   const index = openIndex(config, { timeZone });
-  const db = index.db;
   const state = createStateStore(config);
   const topics = createTopicStore(config);
 
@@ -138,11 +136,11 @@ export function createExtractor(
   function promptContextFromAFreshIndex(text, project, sessionId) {
     index.refresh();
 
-    const ownFacts = factsAlreadyExtractedFrom(sessionId);
+    const ownFacts = index.factsFromSession(sessionId, SAME_SESSION_FACTS_IN_A_PROMPT);
     const match = salientTermsQuery(text);
     if (!match) return { candidates: [], knownFacts: ownFacts.map(asKnownFact) };
 
-    const ranked = factsRankedAgainst(match);
+    const ranked = index.factsRankedAgainst(match, FACTS_SCANNED_FOR_CANDIDATES);
     const candidates = rankedCandidates(ranked, project);
     const chosen = new Set(candidates.map((candidate) => candidate.topic));
     const listed = new Set(ownFacts.map((row) => row.id));
@@ -154,32 +152,8 @@ export function createExtractor(
     return { candidates, knownFacts };
   }
 
-  // A fact carries a truncated session id (corpus/topics.js), so it matches as a prefix of the full one,
-  // the same way SESSION_STARTS_WITH_THE_FACTS_PREFIX joins the two.
-  function factsAlreadyExtractedFrom(sessionId) {
-    return db
-      .prepare(
-        `select id, topic, section, text from facts
-          where session is not null and substr(?, 1, length(session)) = session
-          order by date desc, id desc limit ?`
-      )
-      .all(sessionId, SAME_SESSION_FACTS_IN_A_PROMPT);
-  }
-
-  function factsRankedAgainst(match) {
-    return db
-      .prepare(
-        `select f.id as id, f.topic as topic, f.section as section, f.text as text,
-                bm25(facts_fts) as rank
-         from facts_fts join facts f on f.id = facts_fts.rowid
-         where facts_fts match ?
-         order by bm25(facts_fts), f.date desc limit ?`
-      )
-      .all(match, FACTS_SCANNED_FOR_CANDIDATES);
-  }
-
   function rankedCandidates(ranked, project) {
-    const nearby = topicsOfProject(project);
+    const nearby = index.topicsOfProject(project);
     const byTopic = new Map();
 
     for (const row of ranked) {
@@ -201,31 +175,7 @@ export function createExtractor(
       }))
       .sort((a, b) => b.score - a.score || a.topic.localeCompare(b.topic))
       .slice(0, candidateLimit)
-      .map((candidate) => ({ ...candidate, ...describeTopic(candidate.topic) }));
-  }
-
-  function describeTopic(id) {
-    const row = db.prepare("select summary, keywords from topics where id = ?").get(id);
-    return { summary: row?.summary ?? null, keywords: row?.keywords ?? null };
-  }
-
-  function topicsOfProject(project) {
-    if (!project) return new Set();
-    const projects = index.recordedProjectsUnder(project);
-    const marks = projects.map(() => "?").join(", ");
-
-    const rows = db
-      .prepare(
-        `select distinct f.topic as topic from facts f join sessions s
-           on f.session is not null and ${SESSION_STARTS_WITH_THE_FACTS_PREFIX}
-          where s.project in (${marks})
-         union
-         select distinct topic from sessions
-          where topic is not null and project in (${marks})`
-      )
-      .all(...projects, ...projects);
-
-    return new Set(rows.map((row) => row.topic));
+      .map((candidate) => ({ ...candidate, ...index.describeTopic(candidate.topic) }));
   }
 
   function appendToCorpus(merged, sessionId, candidates, happenedOn) {
@@ -257,15 +207,11 @@ export function createExtractor(
     const candidate = candidates.find((entry) => sameSubject(entry.topic));
     if (candidate) return candidate.topic;
 
-    const existing = db
-      .prepare("select id from topics")
-      .all()
-      .map((row) => row.id)
-      .find(sameSubject);
+    const existing = index.topicIds().find(sameSubject);
     return existing ?? normalized;
   }
 
-  return { extractSession, index, refresh: () => index.refresh(), close: () => index.close() };
+  return { extractSession, refresh: () => index.refresh(), close: () => index.close() };
 }
 
 function firstParsable(candidates) {
