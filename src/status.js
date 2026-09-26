@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 
 import { createExtractionLock } from "./extraction-lock.js";
-import { dollars, thousands } from "./format.js";
+import { dollars, thousands } from "./numbers.js";
 import { localDateParts } from "./parse.js";
 import { createSearch, searchLogEntries, SOURCES } from "./search.js";
 import { openIndex } from "./search-index.js";
