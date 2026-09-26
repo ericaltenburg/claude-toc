@@ -7,13 +7,13 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 
 import { parseJsonLine } from "../json-lines.js";
 
-export function indexedSessions(config) {
-  if (!existsSync(config.sessionIndexPath)) return null;
+// Every session the logger recorded, in the order it recorded them. A line that does not
+// parse, or carries no session id, is skipped.
+export function recordedSessions(config) {
+  if (!existsSync(config.sessionIndexPath)) return [];
   return readFileSync(config.sessionIndexPath, "utf-8")
-    .trim()
     .split("\n")
-    .filter(Boolean)
-    .map(parsedOrNull)
+    .map(parseSessionRecord)
     .filter(Boolean);
 }
 
@@ -47,12 +47,4 @@ export function parseSessionRecord(line) {
     project: record.cwd ?? null,
     startedAt: record.started ?? null,
   };
-}
-
-function parsedOrNull(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
 }

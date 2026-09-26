@@ -5,7 +5,13 @@ import { statSync, writeFileSync } from "node:fs";
 import { createStateStore, ATTEMPTS_BEFORE_QUARANTINE } from "../src/sessions/progress.js";
 import { createSweeper, SESSIONS_PER_SWEEP } from "../src/extract/sweep.js";
 import { EXTRACTION_PROMPT_MARKER } from "../src/sessions/transcript.js";
-import { idleFor, tempCorpus, writeRawTranscript, writeTranscript } from "./support/corpus.js";
+import {
+  appendSessions,
+  idleFor,
+  tempCorpus,
+  writeRawTranscript,
+  writeTranscript,
+} from "./support/corpus.js";
 
 const A_MINUTE = 60_000;
 const AN_HOUR = 60 * A_MINUTE;
@@ -135,6 +141,7 @@ test("a swept session carries the project it was working in", () => {
       session_id: sessionId(1),
       transcript: `${config.transcriptsDir}/${sessionId(1)}.jsonl`,
       cwd: "/work/alcs",
+      started: null,
     },
   ]);
 });
@@ -170,6 +177,7 @@ test("the extraction prompt is recognised behind the metadata records Claude Cod
       session_id: sessionId(2),
       transcript: `${config.transcriptsDir}/${sessionId(2)}.jsonl`,
       cwd: "/work/alcs",
+      started: null,
     },
   ]);
 });
@@ -190,4 +198,40 @@ test("a transcript in a nested project directory is found", () => {
   });
 
   assert.equal(sweptSessions(config).length, 1);
+});
+
+// --- One list with the commands ---
+
+test("a session the logger recorded is swept once, with the project and start it recorded", () => {
+  const config = tempCorpus();
+  const path = transcript(config, sessionId(1), { cwd: "/work/alcs/src" });
+  appendSessions(config, [
+    { session_id: sessionId(1), transcript: path, cwd: "/work/alcs", started: "2026-08-27T15:00:00Z" },
+  ]);
+
+  assert.deepEqual(sweptSessions(config), [
+    { session_id: sessionId(1), transcript: path, cwd: "/work/alcs", started: "2026-08-27T15:00:00Z" },
+  ]);
+});
+
+test("a session known only from the logger is swept when its transcript is idle and unread", () => {
+  const config = tempCorpus();
+  const elsewhere = transcript(config, sessionId(1), {
+    projectDir: `${config.corpusDir}/transcripts-somewhere-else`,
+  });
+  appendSessions(config, [{ session_id: sessionId(1), transcript: elsewhere, cwd: "/work/alcs" }]);
+
+  assert.deepEqual(
+    sweptSessions(config).map((session) => session.session_id),
+    [sessionId(1)]
+  );
+});
+
+test("a session whose transcript rotated away is known but never swept", () => {
+  const config = tempCorpus();
+  appendSessions(config, [
+    { session_id: sessionId(1), transcript: `${config.transcriptsDir}/gone.jsonl`, cwd: "/work/alcs" },
+  ]);
+
+  assert.deepEqual(sweptSessions(config), []);
 });
