@@ -5,6 +5,9 @@ import { renameSync, writeFileSync } from "node:fs";
 // original, and whoever reads it next finds the old content or the new, never a truncated
 // file. The temp name carries the pid so that two writers never truncate each other's.
 //
+// Topic files, toc.json and state.json are all written this way, so it belongs to no one
+// layer: the corpus and the sessions layer each write through it.
+//
 // This survives a killed process, not a power cut: nothing is fsynced. Sync the temp file
 // before the rename if the corpus ever has to survive the machine losing power mid-write.
 export function writeFileAtomically(path, content) {

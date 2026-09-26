@@ -1,4 +1,6 @@
-import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "fs";
+import { readFileSync, mkdirSync, existsSync } from "fs";
+
+import { writeFileAtomically } from "../write-atomically.js";
 
 const STATE_VERSION = 1;
 export const SWEEP_DEBOUNCE_MS = 60_000;
@@ -47,9 +49,7 @@ export function createStateStore(
 
   function save(state) {
     mkdirSync(config.corpusDir, { recursive: true });
-    const tmp = `${config.statePath}.tmp`;
-    writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n");
-    renameSync(tmp, config.statePath);
+    writeFileAtomically(config.statePath, JSON.stringify(state, null, 2) + "\n");
   }
 
   function processedRecord(sessionId) {
