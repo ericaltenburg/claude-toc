@@ -20,7 +20,7 @@ export function createSweeper(
   // The cheap half, for the hook: no transcript is opened.
   function idleSessions() {
     const recorded = state.snapshot();
-    return knownSessionsBeforeOpening(config, recorded).filter((known) =>
+    return knownSessionsBeforeOpening(config).filter((known) =>
       isReadyToExtract(known, recorded)
     );
   }
@@ -28,10 +28,7 @@ export function createSweeper(
   // Lazy on purpose: opening each transcript costs a read, and a sweep wants only a few.
   function waitingSessionsNewestFirst() {
     const recorded = state.snapshot();
-    return knownSessions(config, {
-      recorded,
-      where: (known) => isReadyToExtract(known, recorded),
-    });
+    return knownSessions(config, { where: (known) => isReadyToExtract(known, recorded) });
   }
 
   function waitingSessions() {

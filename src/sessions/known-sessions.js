@@ -10,15 +10,14 @@
 // one of them can see is a session all of them can see. They used to read one source each, the
 // sweep the transcripts and everything else the index, and the two disagreed (ADR 0017).
 //
-// The extractor's own sessions are never on it (ADR 0011). A recorded extractor id and a
-// transcript under the extractor's own directory cost nothing to drop. A historical transcript
-// that opens with the extraction prompt costs a read to recognise, so that check comes last and
-// lazily, after a caller's own cheap test has narrowed the list to what it wants.
+// The extractor's own sessions are never on it (ADR 0011). Extraction no longer runs as a Claude
+// Code session (ADR 0012), so what is left of them is historical transcripts that open with the
+// extraction prompt. Recognising one costs a read, so that check comes last and lazily, after a
+// caller's own cheap test has narrowed the list to what it wants.
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { createStateStore } from "./progress.js";
 import { recordedSessions } from "./registry.js";
 import { howTheTranscriptOpens } from "./transcript.js";
 
@@ -35,11 +34,8 @@ const everySession = () => true;
 // Each session in the shape extraction takes it, which is the shape the logger records it in:
 // `session_id`, `transcript`, `cwd` and `started`. The working directory and start come from the
 // session index when it has them, and the directory from the transcript's opening when not.
-export function* knownSessions(
-  config,
-  { recorded = createStateStore(config).snapshot(), where = everySession } = {}
-) {
-  for (const known of knownSessionsBeforeOpening(config, recorded).filter(where)) {
+export function* knownSessions(config, { where = everySession } = {}) {
+  for (const known of knownSessionsBeforeOpening(config).filter(where)) {
     const opening = hasATranscript(known)
       ? howTheTranscriptOpens(known.transcript)
       : NOTHING_TO_OPEN;
@@ -58,7 +54,7 @@ export function* knownSessions(
 // null for both when it has no transcript on disk. This is what a caller filters on for free:
 // the sweep hook decides on it alone, since nothing expensive may run in front of a prompt
 // (ADR 0010).
-export function knownSessionsBeforeOpening(config, recorded) {
+export function knownSessionsBeforeOpening(config) {
   const byId = new Map();
 
   for (const transcript of transcriptsOnDisk(config)) {
@@ -90,16 +86,7 @@ export function knownSessionsBeforeOpening(config, recorded) {
     });
   }
 
-  return [...byId.values()]
-    .filter((known) => !isTheExtractorsOwnSession(known, recorded, config))
-    .sort(newestFirst);
-}
-
-function isTheExtractorsOwnSession({ session_id: sessionId, transcript }, recorded, config) {
-  return (
-    recorded.isExtractorSession(sessionId) ||
-    Boolean(transcript?.startsWith(config.extractorTranscriptsDir))
-  );
+  return [...byId.values()].sort(newestFirst);
 }
 
 // A session with no transcript on disk sorts after every one that has one, in the order the

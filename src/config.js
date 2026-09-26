@@ -1,8 +1,6 @@
 import { homedir } from "os";
 import { join } from "path";
 
-const claudeCodeProjectDirNameFor = (path) => path.replace(/[^a-zA-Z0-9]/g, "-");
-
 export function createConfig(overrides = {}, env = process.env) {
   const claudeDir =
     overrides.claudeDir ?? env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
@@ -34,13 +32,6 @@ export function createConfig(overrides = {}, env = process.env) {
     extractorCommand,
     awsProfile: overrides.awsProfile ?? env.CLAUDE_TOC_AWS_PROFILE ?? "claudecode",
     awsRegion: overrides.awsRegion ?? env.CLAUDE_TOC_AWS_REGION ?? env.AWS_REGION ?? "us-west-2",
-    // Legacy: before ADR 0012 the extractor ran Claude Code with <root>/extractor as its cwd, so
-    // its old transcripts sit in the project directory named after that path, not after the
-    // cache. This goes away with the sweep guard that reads it.
-    extractorTranscriptsDir: join(
-      transcriptsDir,
-      claudeCodeProjectDirNameFor(join(corpusDir, "extractor"))
-    ),
     topicsDir: join(corpus, "topics"),
     // toc.json records each topic's file relative to itself, and both live in corpus/.
     topicsDirName: "topics",

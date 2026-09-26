@@ -1,6 +1,5 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
 
 import { knownSessions } from "../src/sessions/known-sessions.js";
 import { EXTRACTION_PROMPT_MARKER } from "../src/sessions/transcript.js";
@@ -64,18 +63,12 @@ test("the newest transcript comes first, and a session with none comes after eve
   );
 });
 
-test("the extractor's own sessions are not known sessions, however they are recognised", () => {
+test("the extractor's own sessions are not known sessions", () => {
   const config = tempCorpus();
   writeTranscript(config, sessionId(1), CONVERSATION);
-  writeTranscript(config, sessionId(2), CONVERSATION);
-  writeTranscript(config, sessionId(3), CONVERSATION, { projectDir: config.extractorTranscriptsDir });
-  writeTranscript(config, sessionId(4), [
+  writeTranscript(config, sessionId(2), [
     { role: "user", text: `${EXTRACTION_PROMPT_MARKER}. Analyze this conversation.` },
   ]);
-  writeFileSync(
-    config.statePath,
-    JSON.stringify({ extractorSessions: { [sessionId(2)]: "2026-08-31T19:00:00.000Z" } })
-  );
 
   assert.deepEqual(
     known(config).map((session) => session.session_id),

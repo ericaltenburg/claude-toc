@@ -34,12 +34,6 @@ test("a topic's file in the TOC resolves from the directory the TOC sits in", ()
   assert.equal(join(dirname(config.tocPath), config.topicsDirName), config.topicsDir);
 });
 
-test("the extractor's old transcripts are still looked for where it used to run", () => {
-  const config = createConfig({ corpusDir: "/tmp/root", transcriptsDir: "/tmp/projects" }, {});
-
-  assert.equal(config.extractorTranscriptsDir, join("/tmp/projects", "-tmp-root-extractor"));
-});
-
 test("reads the corpus, transcripts and prompt log from the environment", () => {
   const config = createConfig(
     {},
