@@ -38,3 +38,9 @@ and shallow enough to stay constant work as the corpus grows.
 A stale index during a sweep causes duplicate topics — the sweeper cannot see a
 topic created an hour ago — which is why refresh happens before candidate selection
 and not on a schedule.
+
+**Update (2026-09-25):** the known-facts block is now the session's own earlier facts,
+up to 100 (`SAME_SESSION_FACTS_IN_A_PROMPT` in `src/extract/extractor.js`), followed by
+the twenty ranked facts. 93% of close duplicate pairs came from one session extracted a
+slice at a time, and the ranked twenty rarely included what its earlier slices had
+written. The block is still bounded, so extraction cost stays constant in corpus size.
