@@ -79,18 +79,7 @@ create index prompts_project on prompts(project);
 export function openIndex(config, { timeZone } = {}) {
   mkdirSync(config.corpusDir, { recursive: true });
 
-  let db;
-  let rebuilt;
-  try {
-    db = connect(config);
-    rebuilt = ensureSchema(db);
-  } catch {
-    db?.close();
-    rmSync(config.indexPath, { force: true });
-    db = connect(config);
-    rebuilt = ensureSchema(db);
-  }
-
+  const { db, rebuilt } = openRebuildingOnlyWhatCannotBeRead(config);
   let rebuiltPending = rebuilt;
 
   function refresh() {
@@ -114,6 +103,45 @@ export function openIndex(config, { timeZone } = {}) {
   return { refresh, close: () => db.close(), ...createQueries(db, config) };
 }
 
+// The index is derived and disposable, so two things rebuild it: a schema version other than
+// this code's, which ensureSchema rebuilds in place, and a file SQLite cannot read as a
+// database at all, which is deleted and created afresh. Nothing else does. A lock another
+// process holds, a permission, a full disk: each is a good index that cannot be reached right
+// now, and deleting it would throw away that index from under whoever is using it. Those
+// errors reach the caller instead.
+function openRebuildingOnlyWhatCannotBeRead(config) {
+  try {
+    return openWithSchema(config);
+  } catch (error) {
+    if (!isUnreadableDatabase(error)) throw error;
+    rmSync(config.indexPath, { force: true });
+    return openWithSchema(config);
+  }
+}
+
+function openWithSchema(config) {
+  const db = connect(config);
+  try {
+    return { db, rebuilt: ensureSchema(db) };
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+}
+
+// SQLite's primary result codes for a file that is not a database, and for one whose pages
+// are damaged. The messages are matched as well, for a node:sqlite that reports no code.
+const SQLITE_CORRUPT = 11;
+const SQLITE_NOTADB = 26;
+const PRIMARY_RESULT_CODE = 0xff;
+const CANNOT_BE_READ = /file is not a database|database disk image is malformed/i;
+
+function isUnreadableDatabase(error) {
+  const code = Number.isInteger(error?.errcode) ? error.errcode & PRIMARY_RESULT_CODE : null;
+  if (code === SQLITE_CORRUPT || code === SQLITE_NOTADB) return true;
+  return CANNOT_BE_READ.test(String(error?.message));
+}
+
 // More than one process refreshes the index: the extractor after every session, and a
 // toc-search or toc-status that may run in the same moment. Without a busy timeout SQLite
 // fails the second writer at once with "database is locked"; with one it waits its turn.
@@ -121,10 +149,15 @@ const WAIT_FOR_ANOTHER_WRITER_MS = 5000;
 
 function connect(config) {
   const db = new DatabaseSync(config.indexPath);
-  db.exec(`pragma busy_timeout = ${WAIT_FOR_ANOTHER_WRITER_MS}`);
-  db.exec("pragma journal_mode = wal");
-  db.exec("pragma foreign_keys = on");
-  return db;
+  try {
+    db.exec(`pragma busy_timeout = ${WAIT_FOR_ANOTHER_WRITER_MS}`);
+    db.exec("pragma journal_mode = wal");
+    db.exec("pragma foreign_keys = on");
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 function ensureSchema(db) {
@@ -138,12 +171,18 @@ function ensureSchema(db) {
   return true;
 }
 
+// A database with no meta table, or a meta table of another shape, is a new file or one this
+// code did not build, and it has no version: it is rebuilt like any other mismatch. Every other
+// error is not an answer about the version, and it is thrown rather than read as one.
+const NO_VERSION_RECORDED = /no such (?:table|column)/i;
+
 function storedVersion(db) {
   try {
     const row = db.prepare("select value from meta where key = 'schema_version'").get();
     return row ? Number(row.value) : null;
-  } catch {
-    return null;
+  } catch (error) {
+    if (NO_VERSION_RECORDED.test(String(error?.message))) return null;
+    throw error;
   }
 }
 
