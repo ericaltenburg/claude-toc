@@ -9,9 +9,13 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 
-import { EXTRACTION_PROMPT_MARKER } from "../extract-prompt.js";
 import { parseJsonLine } from "../json-lines.js";
 import { START_OF_TRANSCRIPT } from "./progress.js";
+
+// The words the extraction prompt opens with, and so the words an extractor's own transcript
+// opens with (ADR 0011). Recognising those transcripts is a question about which sessions
+// exist, so the words live here, and the prompt is built on them so the two cannot drift.
+export const EXTRACTION_PROMPT_MARKER = "You are a memory extraction system";
 
 const NEWLINE = 0x0a;
 const READ_CHUNK_BYTES = 64 * 1024;

@@ -2,10 +2,11 @@
 // parser that reads that shape back. They are two halves of one agreement, so they change
 // together and live together.
 
-// The prompt's opening words are also how a transcript is recognised as the extractor's own,
-// per ADR 0011. The prompt owns them; the sweeper imports them to know what to skip.
-export const EXTRACTION_PROMPT_MARKER = "You are a memory extraction system";
+import { EXTRACTION_PROMPT_MARKER } from "./sessions/transcript.js";
 
+// The prompt's opening words are also how a transcript is recognised as the extractor's own,
+// per ADR 0011. The transcript reader owns them, since it is the one that has to recognise
+// them; the prompt opens with them.
 const SCHEMA_INSTRUCTIONS = `${EXTRACTION_PROMPT_MARKER}. Analyze this conversation and extract structured information.
 
 Return ONLY valid JSON with this exact schema:
